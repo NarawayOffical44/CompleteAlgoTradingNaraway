@@ -1,0 +1,24 @@
+# Core
+pandas>=2.2.0
+numpy>=1.26.0
+scipy>=1.13.0
+statsmodels>=0.14.0
+
+# ML
+lightgbm>=4.3.0
+scikit-learn>=1.4.0
+
+# Broker
+dhanhq>=2.0.0
+
+# AI
+anthropic>=0.28.0
+
+# Data
+requests>=2.31.0
+python-dotenv>=1.0.0
+yfinance>=0.2.40
+
+# Utils
+loguru>=0.7.2
+schedule>=1.2.1

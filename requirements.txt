@@ -1,0 +1,12 @@
+ccxt
+pandas
+numpy
+pandas-ta
+python-dotenv
+pyyaml
+schedule
+requests
+rich
+yfinance
+statsmodels
+scikit-learn

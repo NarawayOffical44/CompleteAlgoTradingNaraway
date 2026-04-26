@@ -1,0 +1,46 @@
+exchange:
+  name: binance
+  testnet: true
+trading:
+  symbol: ETH/USDT
+  timeframe: 1h
+  capital: 1000
+  risk_per_trade: 0.02
+  max_daily_loss: 0.05
+  max_open_trades: 3
+strategy:
+  active: mean_reversion
+ema_crossover:
+  ema_fast: 9
+  ema_slow: 21
+  rsi_period: 14
+  rsi_oversold: 40
+  rsi_overbought: 60
+  atr_period: 14
+  atr_multiplier: 2.0
+  take_profit_ratio: 2.0
+mean_reversion:
+  bb_period: 20
+  bb_std: 2.0
+  rsi_period: 14
+  rsi_oversold: 30
+  rsi_overbought: 70
+  atr_period: 14
+  atr_multiplier: 1.5
+  take_profit_ratio: 1.5
+zscore_reversion:
+  window: 100
+  entry_zscore: -1.5
+  take_profit_pct: 0.15
+  atr_multiplier: 3.0
+  atr_period: 14
+  rsi_min: 10
+  rsi_max: 50
+  min_drop_pct: 0.03
+  volume_factor: 1.0
+  use_sma_filter: false
+grid:
+  upper_price: 0
+  lower_price: 0
+  grid_levels: 10
+  grid_size_pct: 0.01

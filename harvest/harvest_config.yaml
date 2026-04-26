@@ -1,0 +1,116 @@
+# HARVEST TRADING SYSTEM CONFIGURATION
+# Separate from main trading system
+# F&O: Fixed ₹1000 trading capital, profits harvested
+# Forex: Grows from harvests, compounds safely
+
+# DATA MODE: Always use LIVE or HISTORICAL (NO MOCKS)
+data_mode: "live"                # Options: "live", "historical", "mock"
+historical_data_file: "data/harvest_backtest_data.csv"  # For development testing
+
+f_and_o_tier:
+  capital: 1000              # LOCKED - never reinvested
+  leverage: 5
+  strategy: mean_reversion_1h
+  symbol: ETH/USDT
+  timeframe: 1h
+
+  trading_rules:
+    position_size: "capital * leverage"
+    stop_loss_pct: 1.5
+    take_profit_pct: 2.5
+    max_trades_per_day: 5
+    max_concurrent_trades: 1
+
+  profit_handling:
+    on_win: "HARVEST_TO_FOREX"      # Profit exits to Forex tier
+    on_loss: "IGNORED"               # Loss doesn't affect Forex
+    reinvestment: "NONE"             # Never reinvests back
+
+  circuit_breaker:
+    daily_loss_limit: -200           # Pause if down ₹200
+    max_consecutive_losses: 3
+    pause_duration_minutes: 60
+
+forex_tier:
+  capital: 0                 # Starts empty, grows from F&O harvests
+  leverage: 2
+  strategy: ema_crossover_4h
+  symbol: EUR/INR
+  timeframe: 4h
+  min_capital: 50            # Minimum to start trading
+
+  trading_rules:
+    position_size: "all_available_capital"
+    stop_loss_pct: 1.0
+    take_profit_pct: 1.5
+    max_trades_per_day: 2
+    max_concurrent_trades: 1
+
+  profit_handling:
+    on_win: "REINVEST"       # Profits compound in Forex
+    on_loss: "REINVEST"      # Losses reduce capital but don't block F&O
+    reinvestment: "AUTO"     # All gains/losses stay in Forex
+
+  capital_source: "F&O_HARVESTS_ONLY"  # Only grows from F&O profits
+
+harvest_mechanism:
+  enabled: true
+  transfer_on_win: true      # Harvest every F&O win
+  transfer_percentage: 100   # Transfer 100% of profit
+  min_transfer_amount: 10    # Only harvest if >₹10
+
+  harvest_history:
+    track: true
+    persist: true
+    file: "harvest/harvest_history.json"
+
+monitoring:
+  dashboard_refresh_interval: 60  # seconds
+  log_level: INFO
+  save_state_interval: 300   # 5 minutes
+  save_trades_interval: 600  # 10 minutes
+
+risk_management:
+  # F&O Protection
+  f_and_o_circuit_breaker:
+    enabled: true
+    daily_loss_threshold: -200
+    drawdown_threshold: -300
+    action: "PAUSE_TRADING"
+    recovery_time: 3600  # 1 hour
+
+  # Forex Protection
+  forex_circuit_breaker:
+    enabled: true
+    capital_minimum: 0     # Never stop - even if capital goes to 0
+    drawdown_threshold: 50  # Max loss from peak
+
+  # Overall Protection
+  max_leverage: 10         # Can't exceed 10x
+  max_position_size: 100   # Can't risk more than ₹100 per trade
+
+data_persistence:
+  state_file: "harvest/harvest_state.json"
+  trades_file: "harvest/harvest_trades.json"
+  archive_trades_daily: true
+  archive_path: "harvest/archive/"
+
+notifications:
+  enabled: false           # Set to true for Telegram/Email alerts
+  on_harvest: true
+  on_circuit_breaker: true
+  on_daily_summary: true
+
+# Growth Stages (informational - auto-calculated)
+growth_stages:
+  stage_1_bootstrap:
+    forex_range: "₹0 - ₹500"
+    status: "Accumulating harvests"
+
+  stage_2_growth:
+    forex_range: "₹500 - ₹2000"
+    status: "Safe tier gaining momentum"
+
+  stage_3_compounding:
+    forex_range: "₹2000+"
+    status: "Safe tier sustains F&O losses"

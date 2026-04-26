@@ -1,0 +1,45 @@
+# AlgoTrading Configuration
+
+exchange:
+  name: binance
+  testnet: true          # Set to false when ready for real money
+
+trading:
+  symbol: BTC/USDT       # Main trading pair
+  timeframe: 1h          # Candle timeframe: 1m, 5m, 15m, 1h, 4h, 1d
+  capital: 1000          # Starting capital in USDT
+  risk_per_trade: 0.02   # 2% of capital risked per trade
+  max_daily_loss: 0.05   # Stop trading if down 5% in a day
+  max_open_trades: 3     # Never have more than 3 open positions
+
+strategy:
+  active: ema_crossover  # Options: ema_crossover, mean_reversion, grid
+
+# EMA Crossover Strategy settings
+ema_crossover:
+  ema_fast: 9
+  ema_slow: 21
+  rsi_period: 14
+  rsi_oversold: 40
+  rsi_overbought: 60
+  atr_period: 14
+  atr_multiplier: 2.0    # Stop loss = entry - (ATR * multiplier)
+  take_profit_ratio: 2.0 # Take profit = risk * ratio (RR ratio)
+
+# Mean Reversion (Bollinger Band) Strategy settings
+mean_reversion:
+  bb_period: 20
+  bb_std: 2.0
+  rsi_period: 14
+  rsi_oversold: 30
+  rsi_overbought: 70
+  atr_period: 14
+  atr_multiplier: 1.5
+  take_profit_ratio: 1.5
+
+# Grid Bot Strategy settings
+grid:
+  upper_price: 0          # 0 = auto-calculate from ATR
+  lower_price: 0          # 0 = auto-calculate from ATR
+  grid_levels: 10
+  grid_size_pct: 0.01     # 1% between grid levels

@@ -1,0 +1,41 @@
+# Environment / secrets — NEVER commit
+.env
+*.env
+config/.env
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+venv/
+env/
+*.egg-info/
+dist/
+build/
+
+# Logs
+logs/
+*.log
+
+# Models (large binaries)
+*.pkl
+*.joblib
+*.h5
+models/
+
+# Data cache
+data/cache/
+*.csv
+
+# IDE / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Runtime state
+risk_state.json
+portfolio_state.json
