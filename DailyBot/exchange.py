@@ -20,11 +20,11 @@ _TIMEOUT_MS = 8000
 def create_exchange():
     if SIM_MODE:
         # Use Bybit public API for data — no geo-restrictions, no keys needed
-        ex = ccxt.bybit({
+        ex = ccxt.kucoin({
             "enableRateLimit": True,
             "timeout":         _TIMEOUT_MS,
         })
-        logger.info("Exchange: Bybit PUBLIC (sim mode — real prices, no orders)")
+        logger.info("Exchange: KuCoin PUBLIC (sim mode — real prices, no orders)")
     else:
         ex = ccxt.binanceusdm({
             "apiKey":          BINANCE_API_KEY,
@@ -81,18 +81,21 @@ def get_position(ex: ccxt.binanceusdm) -> dict | None:
     return None
 
 
-def fetch_ohlcv(ex: ccxt.binanceusdm, limit: int = 150) -> list:
+def fetch_ohlcv(ex, limit: int = 150) -> list:
     from config import TIMEFRAME
+    # KuCoin sim mode uses spot symbol BTC/USDT; live uses BTC/USDT:USDT perp
+    sym = "BTC/USDT" if SIM_MODE else SYMBOL
     try:
-        return ex.fetch_ohlcv(SYMBOL, TIMEFRAME, limit=limit)
+        return ex.fetch_ohlcv(sym, TIMEFRAME, limit=limit)
     except Exception as e:
         logger.error(f"fetch_ohlcv: {e}")
         return []
 
 
-def get_last_price(ex: ccxt.binanceusdm) -> float:
+def get_last_price(ex) -> float:
+    sym = "BTC/USDT" if SIM_MODE else SYMBOL
     try:
-        return float(ex.fetch_ticker(SYMBOL)["last"])
+        return float(ex.fetch_ticker(sym)["last"])
     except Exception as e:
         logger.error(f"fetch_ticker: {e}")
         return 0.0
