@@ -13,7 +13,9 @@ import json
 import logging
 import os
 import time
+import threading
 from datetime import date, datetime, timezone
+from http.server import BaseHTTPRequestHandler, HTTPServer
 
 import requests
 
@@ -262,6 +264,23 @@ def _print_summary() -> None:
 
 
 # ── Entry point ───────────────────────────────────────────────────────────────
+def _start_health_server() -> None:
+    """Bind to PORT so Render doesn't kill the service."""
+    port = int(os.getenv("PORT", "10000"))
+
+    class Handler(BaseHTTPRequestHandler):
+        def do_GET(self):
+            self.send_response(200)
+            self.end_headers()
+            self.wfile.write(b"DailyBot running")
+        def log_message(self, *args):
+            pass  # suppress access logs
+
+    server = HTTPServer(("0.0.0.0", port), Handler)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    logger.info(f"Health server listening on port {port}")
+
+
 def main() -> None:
     mode = "SIM (real prices, no orders)" if SIM_MODE else ("TESTNET (paper)" if TESTNET else "LIVE")
     banner = f"{AGENT_NAME} DailyBot | BTC/USDT Perp | {mode} | Target ₹20/day after 30% tax"
@@ -269,6 +288,7 @@ def main() -> None:
     logger.info(banner)
     logger.info("=" * len(banner))
 
+    _start_health_server()
     ex    = create_exchange()
     init_leverage(ex)
     state = load_state()
