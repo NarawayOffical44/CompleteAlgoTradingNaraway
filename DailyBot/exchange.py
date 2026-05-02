@@ -17,14 +17,14 @@ logger = logging.getLogger(__name__)
 _TIMEOUT_MS = 8000
 
 
-def create_exchange() -> ccxt.binanceusdm:
+def create_exchange():
     if SIM_MODE:
-        # Public-only: no API keys — only used for OHLCV + ticker (public endpoints)
-        ex = ccxt.binanceusdm({
+        # Use Bybit public API for data — no geo-restrictions, no keys needed
+        ex = ccxt.bybit({
             "enableRateLimit": True,
             "timeout":         _TIMEOUT_MS,
         })
-        logger.info("Exchange: Binance PUBLIC (sim mode — real prices, no orders)")
+        logger.info("Exchange: Bybit PUBLIC (sim mode — real prices, no orders)")
     else:
         ex = ccxt.binanceusdm({
             "apiKey":          BINANCE_API_KEY,

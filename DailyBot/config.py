@@ -14,7 +14,7 @@ CAPITAL_USDT = float(os.getenv("CAPITAL_USDT", "12.0"))   # ~₹1000
 INR_PER_USD  = float(os.getenv("INR_PER_USD", "83.5"))
 
 # ── Market ────────────────────────────────────────────────────────────────────
-SYMBOL     = "BTC/USDT:USDT"   # perpetual futures
+SYMBOL     = "BTC/USDT:USDT"   # perpetual futures (works on both Bybit and Binance)
 TIMEFRAME  = "5m"
 LEVERAGE   = 10
 
