@@ -4,9 +4,9 @@ from dotenv import load_dotenv
 load_dotenv()
 
 # ── Exchange ──────────────────────────────────────────────────────────────────
-BINANCE_API_KEY    = os.getenv("BINANCE_API_KEY", "")
-BINANCE_API_SECRET = os.getenv("BINANCE_API_SECRET", "")
-TESTNET            = os.getenv("TESTNET", "true").lower() == "true"
+BYBIT_API_KEY      = os.getenv("BYBIT_API_KEY", "")
+BYBIT_API_SECRET   = os.getenv("BYBIT_API_SECRET", "")
+TESTNET            = os.getenv("TESTNET", "false").lower() == "true"
 SIM_MODE           = os.getenv("SIM_MODE", "false").lower() == "true"
 
 # ── Capital ───────────────────────────────────────────────────────────────────

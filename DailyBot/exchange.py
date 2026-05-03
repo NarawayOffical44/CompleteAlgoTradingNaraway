@@ -1,14 +1,14 @@
 """
-Binance exchange wrapper.
+Bybit exchange wrapper (USDT-margined perpetuals).
 
-SIM_MODE=true  — real live prices from public Binance API, no keys needed,
-                 all orders simulated internally. Use for paper trading.
-SIM_MODE=false — real orders on testnet (TESTNET=true) or live (TESTNET=false).
+SIM_MODE=true  — real live prices from Bybit public API, no keys needed,
+                 all orders simulated internally.
+SIM_MODE=false — real orders on live Bybit (TESTNET=false).
 """
 import logging
 import ccxt
 from config import (
-    BINANCE_API_KEY, BINANCE_API_SECRET, TESTNET, SIM_MODE,
+    BYBIT_API_KEY, BYBIT_API_SECRET, TESTNET, SIM_MODE,
     SYMBOL, LEVERAGE, CAPITAL_USDT,
 )
 
@@ -19,31 +19,30 @@ _TIMEOUT_MS = 8000
 
 def create_exchange():
     if SIM_MODE:
-        # Use Bybit public API for data — no geo-restrictions, no keys needed
-        ex = ccxt.kucoin({
+        ex = ccxt.bybit({
             "enableRateLimit": True,
             "timeout":         _TIMEOUT_MS,
         })
-        logger.info("Exchange: KuCoin PUBLIC (sim mode — real prices, no orders)")
+        logger.info("Exchange: Bybit PUBLIC (sim mode — real prices, no orders)")
     else:
-        ex = ccxt.binanceusdm({
-            "apiKey":          BINANCE_API_KEY,
-            "secret":          BINANCE_API_SECRET,
-            "options":         {"defaultType": "future"},
+        ex = ccxt.bybit({
+            "apiKey":          BYBIT_API_KEY,
+            "secret":          BYBIT_API_SECRET,
             "enableRateLimit": True,
             "timeout":         _TIMEOUT_MS,
+            "options":         {"defaultType": "linear"},  # USDT-margined perps
         })
         if TESTNET:
             ex.set_sandbox_mode(True)
-            logger.info("Exchange: Binance FUTURES TESTNET")
+            logger.info("Exchange: Bybit TESTNET")
         else:
-            logger.info("Exchange: Binance FUTURES LIVE")
+            logger.info("Exchange: Bybit LIVE")
     return ex
 
 
-def init_leverage(ex: ccxt.binanceusdm) -> None:
+def init_leverage(ex: ccxt.bybit) -> None:
     if SIM_MODE:
-        logger.info(f"Sim mode: leverage {LEVERAGE}x (simulated, no API call)")
+        logger.info(f"Sim mode: leverage {LEVERAGE}x (simulated)")
         return
     try:
         ex.set_margin_mode("isolated", SYMBOL)
@@ -56,19 +55,19 @@ def init_leverage(ex: ccxt.binanceusdm) -> None:
         logger.warning(f"set_leverage skipped: {e}")
 
 
-def get_balance(ex: ccxt.binanceusdm) -> float:
+def get_balance(ex: ccxt.bybit) -> float:
     if SIM_MODE:
         return CAPITAL_USDT
     try:
-        bal = ex.fetch_balance()
+        bal = ex.fetch_balance({"type": "linear"})
         return float(bal.get("USDT", {}).get("free", 0))
     except Exception as e:
         logger.error(f"fetch_balance: {e}")
         return 0.0
 
 
-def get_position(ex: ccxt.binanceusdm) -> dict | None:
-    """In sim mode always returns None — position is tracked via state["open_trade"]."""
+def get_position(ex: ccxt.bybit) -> dict | None:
+    """In sim mode always returns None — position tracked via state['open_trade']."""
     if SIM_MODE:
         return None
     try:
@@ -83,8 +82,7 @@ def get_position(ex: ccxt.binanceusdm) -> dict | None:
 
 def fetch_ohlcv(ex, limit: int = 150) -> list:
     from config import TIMEFRAME
-    # KuCoin sim mode uses spot symbol BTC/USDT; live uses BTC/USDT:USDT perp
-    sym = "BTC/USDT" if SIM_MODE else SYMBOL
+    sym = "BTC/USDT:USDT" if not SIM_MODE else "BTC/USDT:USDT"
     try:
         return ex.fetch_ohlcv(sym, TIMEFRAME, limit=limit)
     except Exception as e:
@@ -93,15 +91,14 @@ def fetch_ohlcv(ex, limit: int = 150) -> list:
 
 
 def get_last_price(ex) -> float:
-    sym = "BTC/USDT" if SIM_MODE else SYMBOL
     try:
-        return float(ex.fetch_ticker(sym)["last"])
+        return float(ex.fetch_ticker("BTC/USDT:USDT")["last"])
     except Exception as e:
         logger.error(f"fetch_ticker: {e}")
         return 0.0
 
 
-def open_position(ex: ccxt.binanceusdm, side: str, usdt_margin: float) -> dict | None:
+def open_position(ex: ccxt.bybit, side: str, usdt_margin: float) -> dict | None:
     if SIM_MODE:
         price = get_last_price(ex)
         logger.info(f"[SIM] Opened {side} @ {price:.2f}  margin=${usdt_margin:.2f}×{LEVERAGE}x")
@@ -110,8 +107,13 @@ def open_position(ex: ccxt.binanceusdm, side: str, usdt_margin: float) -> dict |
         price = get_last_price(ex)
         if price <= 0:
             return None
-        qty = float(ex.amount_to_precision(SYMBOL, (usdt_margin * LEVERAGE) / price))
-        order = ex.create_market_order(SYMBOL, "buy" if side == "long" else "sell", qty)
+        qty   = float(ex.amount_to_precision(SYMBOL, (usdt_margin * LEVERAGE) / price))
+        order = ex.create_market_order(
+            SYMBOL,
+            "buy" if side == "long" else "sell",
+            qty,
+            params={"positionIdx": 0},  # one-way mode
+        )
         logger.info(f"Opened {side} {qty} BTC @ ~{price:.2f}")
         return order
     except Exception as e:
@@ -119,19 +121,19 @@ def open_position(ex: ccxt.binanceusdm, side: str, usdt_margin: float) -> dict |
         return None
 
 
-def close_position(ex: ccxt.binanceusdm, position: dict) -> dict | None:
+def close_position(ex: ccxt.bybit, position: dict) -> dict | None:
     if SIM_MODE:
         price = get_last_price(ex)
         logger.info(f"[SIM] Closed {position.get('side')} @ {price:.2f}")
         return {"sim": True, "price": price}
     try:
-        side = position["side"]
-        qty  = abs(float(position["contracts"]))
+        side  = position["side"]
+        qty   = abs(float(position["contracts"]))
         order = ex.create_market_order(
             SYMBOL,
             "sell" if side == "long" else "buy",
             qty,
-            params={"reduceOnly": True},
+            params={"reduceOnly": True, "positionIdx": 0},
         )
         logger.info(f"Closed {side} ({qty} BTC)")
         return order
