@@ -34,7 +34,7 @@ TAKE_PROFIT_PCT       = 0.006   # +0.6%
 STOP_LOSS_PCT         = 0.002   # −0.2%
 BREAKEVEN_TRIGGER_PCT = 0.002   # trail SL to entry once +0.2% in profit
 MAX_HOLD_HOURS        = 3
-FEES_PCT_ROUNDTRIP    = 0.001   # Binance taker 0.05% × 2 sides
+FEES_PCT_ROUNDTRIP    = 0.0011  # Bybit taker 0.055% × 2 sides
 
 # ── Daily limits ──────────────────────────────────────────────────────────────
 MAX_TRADES_PER_DAY   = 20

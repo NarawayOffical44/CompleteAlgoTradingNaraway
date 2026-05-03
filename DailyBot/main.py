@@ -25,7 +25,7 @@ from config import (
     MAX_HOLD_HOURS, FEES_PCT_ROUNDTRIP, LEVERAGE,
     MAX_TRADES_PER_DAY, DAILY_GROSS_TARGET_INR, MAX_DAILY_LOSS_INR,
     CHECK_INTERVAL_SECONDS, TRADING_HOURS_UTC_START, TRADING_HOURS_UTC_END,
-    TESTNET, SIM_MODE,
+    TESTNET, SIM_MODE, INDIA_TAX_RATE,
 )
 from exchange import (
     create_exchange, init_leverage,
@@ -130,9 +130,33 @@ def save_state(s: dict) -> None:
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
+def pnl_breakdown(entry: float, exit_: float, side: str, margin_usdt: float) -> dict:
+    """Full cost breakdown: raw → fees → gross → tax → net (all in USDT and INR)."""
+    move_pct  = (exit_ - entry) / entry if side == "long" else (entry - exit_) / entry
+    notional  = margin_usdt * LEVERAGE
+    raw_usdt  = notional * move_pct
+    fees_usdt = notional * FEES_PCT_ROUNDTRIP          # paid regardless of win/loss
+    gross_usdt = raw_usdt - fees_usdt
+    tax_usdt  = max(0.0, gross_usdt * INDIA_TAX_RATE)  # 30% only on gains
+    net_usdt  = gross_usdt - tax_usdt
+    return {
+        "move_pct":   move_pct,
+        "raw_usdt":   raw_usdt,
+        "fees_usdt":  fees_usdt,
+        "gross_usdt": gross_usdt,
+        "tax_usdt":   tax_usdt,
+        "net_usdt":   net_usdt,
+        "raw_inr":    raw_usdt   * INR_PER_USD,
+        "fees_inr":   fees_usdt  * INR_PER_USD,
+        "gross_inr":  gross_usdt * INR_PER_USD,
+        "tax_inr":    tax_usdt   * INR_PER_USD,
+        "net_inr":    net_usdt   * INR_PER_USD,
+    }
+
+
 def pnl_from_prices(entry: float, exit_: float, side: str, margin_usdt: float) -> float:
-    raw = (exit_ - entry) / entry if side == "long" else (entry - exit_) / entry
-    return margin_usdt * LEVERAGE * (raw - FEES_PCT_ROUNDTRIP)
+    """Gross USDT after fees (kept for tax.record_trade compatibility)."""
+    return pnl_breakdown(entry, exit_, side, margin_usdt)["gross_usdt"]
 
 
 def _trading_window() -> bool:
@@ -294,10 +318,9 @@ def tick(ex, state: dict) -> dict:
             if live_pos:
                 order = close_position(ex, live_pos)
                 if order:
-                    gross_usdt = pnl_from_prices(entry, current_price, side, margin)
-                    tax_entry  = record_trade(gross_usdt)
-                    hold_min   = round(hold_h * 60)
-                    pnl_pct    = (current_price - entry) / entry if side == "long" else (entry - current_price) / entry
+                    bd        = pnl_breakdown(entry, current_price, side, margin)
+                    tax_entry = record_trade(bd["gross_usdt"])
+                    hold_min  = round(hold_h * 60)
 
                     log_trade({
                         "date":         str(date.today()),
@@ -306,26 +329,31 @@ def tick(ex, state: dict) -> dict:
                         "exit_price":   round(current_price, 2),
                         "reason":       reason,
                         "hold_minutes": hold_min,
-                        "gross_inr":    tax_entry["gross_inr"],
-                        "tax_inr":      tax_entry["tax_inr"],
-                        "net_inr":      tax_entry["net_inr"],
+                        "fees_inr":     round(bd["fees_inr"], 2),
+                        "gross_inr":    round(bd["gross_inr"], 2),
+                        "tax_inr":      round(bd["tax_inr"], 2),
+                        "net_inr":      round(bd["net_inr"], 2),
                     })
 
-                    state["daily_pnl_usdt"] += gross_usdt
+                    state["daily_pnl_usdt"] += bd["gross_usdt"]
                     state["open_trade"]      = None
                     state["trades_today"]   += 1
 
                     summary    = daily_summary()
                     mode       = _mode_tag()
-                    result_tag = "WIN" if gross_usdt > 0 else "LOSS"
+                    result_tag = "WIN" if bd["gross_usdt"] > 0 else "LOSS"
 
                     msg = (
                         f"<b>CLOSED [{reason}] {result_tag} [{mode}]</b>\n"
                         f"Side: {side.upper()}  BTC @ ${current_price:,.2f}\n"
                         f"Entry: ${entry:,.2f}  Exit: ${current_price:,.2f}\n"
-                        f"Move: {pnl_pct*100:+.3f}%  Leveraged: {pnl_pct*LEVERAGE*100:+.2f}%\n"
+                        f"Move: {bd['move_pct']*100:+.3f}%  Leveraged: {bd['move_pct']*LEVERAGE*100:+.2f}%\n"
                         f"Hold: {hold_min}m\n"
-                        f"Gross: Rs{tax_entry['gross_inr']:.2f}  Tax: Rs{tax_entry['tax_inr']:.2f}  <b>Net: Rs{tax_entry['net_inr']:.2f}</b>\n"
+                        f"Raw PnL:       Rs{bd['raw_inr']:+.2f}\n"
+                        f"Fees (0.11%):  Rs{-bd['fees_inr']:.2f}\n"
+                        f"After fees:    Rs{bd['gross_inr']:+.2f}\n"
+                        f"Tax (30%):     Rs{-bd['tax_inr']:.2f}\n"
+                        f"<b>Net:           Rs{bd['net_inr']:+.2f}</b>\n"
                         f"Day total — Trades: {summary['trades']}  Net: Rs{summary['net_inr']:.2f}"
                     )
                     logger.info(msg)
