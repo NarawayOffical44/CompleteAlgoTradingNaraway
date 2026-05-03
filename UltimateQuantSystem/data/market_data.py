@@ -211,9 +211,11 @@ class MarketDataFetcher:
         except Exception as e:
             logger.debug(f"NSE history failed for {symbol}: {e}")
 
-        # ── Fallback: Yahoo Finance ────────────────────────────────────────
+        # ── Fallback: Yahoo Finance (.NS then .BO) ────────────────────────
         if not result:
             result = self._yfinance_stock(f"{symbol}.NS", label=symbol)
+        if not result:
+            result = self._yfinance_stock(f"{symbol}.BO", label=f"{symbol}(BSE)")
 
         if result:
             self._save_cache(cache_key, result)

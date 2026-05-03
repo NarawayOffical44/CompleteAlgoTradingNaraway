@@ -5,3 +5,9 @@ from .momentum import MomentumAgent
 from .momentum_scalper import MomentumScalper
 from .options_bot import OptionsBot
 from .crypto_momentum import CryptoMomentumBot
+from .forex_momentum import ForexMomentumBot
+from .forex_mean_reversion import ForexMeanReversionBot
+from .banknifty_straddle import BankNiftyStraddleBot
+from .meme_sniper import MemeSniper
+from .perp_futures_bot import PerpFuturesBot
+from .polymarket_bot import PolymarketBot

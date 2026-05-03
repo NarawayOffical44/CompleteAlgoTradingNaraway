@@ -1,0 +1,15 @@
+{
+  "total_gains_usdt": 0.6,
+  "total_tax_usdt": 0.18,
+  "trades": [
+    {
+      "date": "2026-05-03",
+      "gross_usdt": 0.6,
+      "tax_usdt": 0.18,
+      "net_usdt": 0.42,
+      "gross_inr": 50.1,
+      "tax_inr": 15.03,
+      "net_inr": 35.07
+    }
+  ]
+}

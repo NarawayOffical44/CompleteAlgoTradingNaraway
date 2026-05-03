@@ -17,6 +17,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 from config import RiskConfig
 from loguru import logger
+from notify import notify
 
 
 AGGRESSIVE_COMBINED_CAP_PCT = 10.0   # max % of portfolio in aggressive agents combined
@@ -49,6 +50,7 @@ class RiskEngine:
             daily_start_capital=starting_capital,
         )
         self._aggressive_agents: set = set()
+        self._milestone = (starting_capital // 10_000) * 10_000  # last milestone crossed
         logger.info(f"RiskEngine initialized | capital={starting_capital} | mode=NORMAL")
 
     # ── Agent registration ────────────────────────────────────────────────
@@ -118,6 +120,7 @@ class RiskEngine:
 
         self.state.agent_pnl_history.setdefault(agent_id, []).append(pnl)
         logger.info(f"CLOSE | {key} | pnl={pnl:.2f} | capital={self.state.capital:.2f}")
+        self._check_milestone()
         self._evaluate_mode()
 
     # ── Daily reset ───────────────────────────────────────────────────────
@@ -228,11 +231,26 @@ class RiskEngine:
         }
 
     # ── Internal ──────────────────────────────────────────────────────────
+    def _check_milestone(self):
+        current_milestone = (self.state.capital // 10_000) * 10_000
+        if current_milestone > self._milestone:
+            self._milestone = current_milestone
+            notify(
+                f"<b>Milestone ₹{current_milestone:,.0f} crossed</b>\n"
+                f"Capital: ₹{self.state.capital:,.2f}"
+            )
+
     def _evaluate_mode(self):
         drawdown   = (self.state.high_watermark - self.state.capital) / self.state.high_watermark * 100
         daily_loss = (self.state.daily_start_capital - self.state.capital) / self.state.daily_start_capital * 100
 
         if drawdown >= self.config.drawdown_kill_pct or daily_loss >= self.config.daily_loss_limit_pct:
+            if self.state.mode != RiskMode.STOPPED:
+                notify(
+                    f"<b>KILL SWITCH ACTIVATED</b>\n"
+                    f"Drawdown: {drawdown:.1f}%  Daily loss: {daily_loss:.1f}%\n"
+                    f"Capital: ₹{self.state.capital:,.0f} — no more trades today"
+                )
             self.state.mode = RiskMode.STOPPED
             logger.critical(f"KILL SWITCH | drawdown={drawdown:.1f}% | daily_loss={daily_loss:.1f}%")
         elif drawdown >= self.config.drawdown_warning_pct:

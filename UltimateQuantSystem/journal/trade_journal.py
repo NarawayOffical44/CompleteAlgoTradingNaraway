@@ -117,10 +117,18 @@ class TradeJournal:
         winners = [p for p in pnls if p > 0]
         losers  = [p for p in pnls if p <= 0]
 
+        # Sharpe: mean / std of per-trade pnl_pct, scaled to annualised equivalent
+        pnl_pcts = [t.pnl_pct for t in closed]
+        n        = len(pnl_pcts)
+        mean_r   = sum(pnl_pcts) / n
+        std_r    = (sum((x - mean_r) ** 2 for x in pnl_pcts) / n) ** 0.5 if n > 1 else 0.0
+        sharpe   = round((mean_r / std_r) * (252 ** 0.5), 2) if std_r > 0 else 0.0
+
         return {
             "trades":        len(closed),
             "win_rate":      round(len(winners) / len(closed) * 100, 1),
             "total_pnl":     round(sum(pnls), 2),
+            "sharpe":        sharpe,
             "avg_win":       round(sum(winners) / len(winners), 2) if winners else 0,
             "avg_loss":      round(sum(losers)  / len(losers),  2) if losers  else 0,
             "profit_factor": round(abs(sum(winners) / sum(losers)), 2)

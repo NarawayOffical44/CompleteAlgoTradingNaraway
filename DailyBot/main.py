@@ -260,9 +260,21 @@ def tick(ex, state: dict) -> dict:
         logger.info(f"Max {MAX_TRADES_PER_DAY} trades reached. Done for today.")
         return state
 
+    state["scans_today"] = state.get("scans_today", 0) + 1
+    _update_status(
+        last_scan   = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC"),
+        scans_today = state["scans_today"],
+    )
+
     ohlcv = fetch_ohlcv(ex)
     if not ohlcv:
+        # Still show live BTC price even when OHLCV fails
+        fallback_price = get_last_price(ex)
+        if fallback_price:
+            _update_status(btc_price=fallback_price, last_error="fetch_ohlcv failed")
         return state
+
+    _update_status(last_error="")
 
     ind           = compute_indicators(ohlcv)
     current_price = float(ind["close"][-1])
@@ -273,13 +285,9 @@ def tick(ex, state: dict) -> dict:
     vwap          = ind["vwap"][-1]
     trend         = "BULL" if ef > es else "BEAR"
 
-    state["scans_today"] = state.get("scans_today", 0) + 1
-
     # Update shared status for web dashboard
     summary = daily_summary()
     _update_status(
-        last_scan    = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC"),
-        scans_today  = state["scans_today"],
         btc_price    = current_price,
         rsi          = rsi,
         ema9         = ef,

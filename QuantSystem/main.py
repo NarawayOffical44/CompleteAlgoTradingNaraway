@@ -22,6 +22,8 @@ from journal import TradeJournal
 from broker import DhanClient
 from agents import MeanReversionAgent, PairsTradingAgent, MomentumAgent, MomentumScalper, OptionsBot
 from ai import Orchestrator
+from notify import notify
+from reports import send_daily_report
 
 
 logger.add(
@@ -163,6 +165,11 @@ def boot():
         config.trading_mode = "live"
 
     logger.info(f"QuantSystem | mode={config.trading_mode} | capital=₹{config.starting_capital:,.0f}")
+    notify(
+        f"<b>QuantSystem STARTED</b>\n"
+        f"Mode: <code>{config.trading_mode.upper()}</code>  "
+        f"Capital: <b>₹{config.starting_capital:,.0f}</b>"
+    )
 
     risk    = RiskEngine(starting_capital=config.starting_capital)
     journal = TradeJournal(journal_dir="logs")
@@ -219,13 +226,15 @@ def market_open(orchestrator, risk, journal):
         logger.warning(f"Corr alerts: {results['correlation_alerts']}")
 
 
-def market_close(risk, journal):
+def market_close(risk, journal, orchestrator=None):
     logger.info("MARKET CLOSE")
     risk.end_of_day()
     summary = journal.summary()
     logger.info(f"Summary: {summary}")
     if summary.get("trades", 0) > 0:
         logger.info(f"Journal: {journal.export_json()}")
+    agents = orchestrator.agents if orchestrator else {}
+    send_daily_report(journal, risk, agents)
 
 
 # ── Continuous paper trading loop ─────────────────────────────────────────────
@@ -298,7 +307,7 @@ def main():
     if "--test" in sys.argv:
         logger.info("Test mode — single cycle")
         market_open(orchestrator, risk, journal)
-        market_close(risk, journal)
+        market_close(risk, journal, orchestrator)
         logger.info(f"Status: {orchestrator.status()}")
         return
 
@@ -308,7 +317,7 @@ def main():
 
     # Default — IST production schedule (fires at 09:20 open and 15:35 close)
     schedule.every().day.at("09:20").do(market_open,  orchestrator, risk, journal)
-    schedule.every().day.at("15:35").do(market_close, risk, journal)
+    schedule.every().day.at("15:35").do(market_close, risk, journal, orchestrator)
 
     logger.info("Scheduler running | 09:20 open | 15:35 close")
     logger.info(f"Status: {orchestrator.status()}")
@@ -322,4 +331,11 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+        notify("<b>QuantSystem stopped</b> (clean exit)")
+    except KeyboardInterrupt:
+        notify("<b>QuantSystem stopped</b> (Ctrl+C)")
+    except Exception as e:
+        notify(f"<b>QuantSystem CRASHED</b>\n<code>{e}</code>")
+        raise

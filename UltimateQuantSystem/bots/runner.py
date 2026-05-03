@@ -2,17 +2,30 @@
 BotRunner — Wraps any BaseAgent and runs it independently in its own thread.
 
 Each BotRunner:
-  - Has its own market (NSE, Crypto, Forex — pluggable)
+  - Has its own market (NSE, Crypto, Forex, Solana — pluggable)
   - Checks if that market is open before each tick
   - Fetches its own data (5-min cache means no duplicate network calls)
-  - Gets allocation from its market based on regime
+  - Gets allocation from market × head_ai_mult (HeadAI can reduce/boost)
   - Runs the agent with correct risk scaling
   - Reports status, PnL, errors to BotRegistry
 
-Adding a new bot to a new market:
-  runner = BotRunner(agent=MyCryptoBot(), market=CryptoMarket(), risk=risk)
-  registry.register(runner)
-  Nothing else changes.
+interval_s:
+  Default 900s (15 min) for all standard bots.
+  Set to 120s for MemeSniper (needs 2-min polling).
+  Set to any value per-bot: BotRunner(agent=..., interval_s=60)
+
+Suspension:
+  HeadAI or BotRegistry can call:
+    runner.suspended = True
+    runner.suspended_reason = "..."
+    runner.suspended_until = datetime(...)
+  The runner then skips all ticks until resumed.
+
+head_ai_mult:
+  HeadAI sets runner.head_ai_mult (0.0–1.0).
+  Final alloc = market_alloc × head_ai_mult.
+  Persists across ticks until HeadAI changes it.
+  Default 1.0 (no change).
 """
 
 import time
@@ -20,27 +33,40 @@ import threading
 from datetime import datetime
 from loguru import logger
 
-SIGNAL_INTERVAL_S = 15 * 60    # run signals every 15 min
-_STOP_CHECK_S     = 5           # check stop flag every 5s
+DEFAULT_INTERVAL_S = 15 * 60   # 15 minutes — standard bots
+_STOP_CHECK_S      = 5          # check stop flag every 5s
 
 
 class BotRunner:
 
-    def __init__(self, agent, market, risk_engine, run_fn=None):
+    def __init__(self, agent, market, risk_engine, run_fn=None,
+                 interval_s: int = DEFAULT_INTERVAL_S):
         """
-        agent      : any BaseAgent subclass (or options_bot)
+        agent      : any BaseAgent subclass (or options_bot / standalone)
         market     : BaseMarket subclass — defines hours, data, regime, alloc
         risk_engine: shared RiskEngine (thread-safe)
         run_fn     : optional callable(agent, market_data, regime) — for custom run signatures
                      defaults to agent.run(market_data, regime=regime)
+        interval_s : seconds between signal checks (default 900 = 15 min;
+                     use 120 for MemeSniper, 60 for scalpers)
         """
         self.agent       = agent
         self.agent_id    = getattr(agent, "agent_id", getattr(agent, "underlying", "unknown"))
         self.market      = market
         self.risk        = risk_engine
         self._run_fn     = run_fn or (lambda a, data, regime: a.run(data, regime=regime))
+        self._interval_s = interval_s
 
-        # Status (read by registry + dashboard)
+        # ── HeadAI controls ───────────────────────────────────────────────
+        self.head_ai_mult    = 1.0
+        self.head_ai_note    = ""
+
+        # ── Suspension (set by HeadAI or BotRegistry) ────────────────────
+        self.suspended        = False
+        self.suspended_reason = ""
+        self.suspended_until  = None
+
+        # ── Status (read by registry + dashboard) ────────────────────────
         self.status          = "stopped"
         self.error_count     = 0
         self.last_error      = None
@@ -63,7 +89,7 @@ class BotRunner:
             daemon=True,
         )
         self._thread.start()
-        logger.info(f"BotRunner | {self.agent_id} | started on {self.market.market_id}")
+        logger.info(f"BotRunner | {self.agent_id} | started on {self.market.market_id} | interval={self._interval_s}s")
 
     def stop(self):
         self._stop_event.set()
@@ -83,9 +109,8 @@ class BotRunner:
                 self.last_error  = str(e)
                 logger.error(f"BotRunner | {self.agent_id} | loop error: {e}")
 
-            # Wait SIGNAL_INTERVAL_S, checking stop flag every 5s
             elapsed = 0
-            while elapsed < SIGNAL_INTERVAL_S and not self._stop_event.is_set():
+            while elapsed < self._interval_s and not self._stop_event.is_set():
                 time.sleep(_STOP_CHECK_S)
                 elapsed += _STOP_CHECK_S
 
@@ -94,6 +119,22 @@ class BotRunner:
 
     # ── Single tick ───────────────────────────────────────────────────────
     def _tick(self):
+        self.runs_total += 1
+        self.last_run = datetime.now().strftime("%H:%M:%S")
+
+        # 0. Suspension check
+        if self.suspended:
+            self.status = "suspended"
+            if self.suspended_until and datetime.now() >= self.suspended_until:
+                self.suspended        = False
+                self.suspended_reason = ""
+                self.suspended_until  = None
+                self.head_ai_mult     = 1.0
+                logger.info(f"BotRunner | {self.agent_id} | auto-resumed after suspension")
+            else:
+                logger.debug(f"BotRunner | {self.agent_id} | suspended ({self.suspended_reason}), skipping tick")
+                return
+
         # 1. Check market hours
         if not self.market.is_open():
             self.status = "market_closed"
@@ -108,25 +149,28 @@ class BotRunner:
 
         t0 = time.time()
 
-        # 3. Fetch market data — 5-min cached, all bots in same market share cache
+        # 3. Fetch market data — cached, all bots in same market share cache
         market_data = self.market.get_data()
-        # Each bot gets its own copy to safely add _regime/_fundamentals etc.
         market_data = dict(market_data)
 
         # 4. Get regime
         regime = self.market.get_regime(market_data)
 
-        # 5. Check allocation for this bot in this regime
-        alloc = self.market.get_allocation(self.agent_id, regime, market_data)
-        if alloc == 0.0:
-            self.status = f"skip:{regime}"
-            logger.info(f"{self.agent_id} | alloc=0 in {regime} — skipping")
+        # 5. Check market allocation for this bot in this regime
+        market_alloc = self.market.get_allocation(self.agent_id, regime, market_data)
+
+        # 6. Apply HeadAI multiplier
+        alloc = market_alloc * self.head_ai_mult
+        if alloc <= 0.0:
+            reason = "ai_reduced" if self.head_ai_mult < 1.0 else regime
+            self.status = f"skip:{reason}"
+            logger.info(f"{self.agent_id} | alloc=0 — skipping")
             return
 
-        # 6. Set per-agent allocation in risk engine (thread-safe)
+        # 7. Set per-agent allocation in risk engine
         self.risk.set_agent_alloc_mult(self.agent_id, alloc)
 
-        # 7. Enrich market_data with context agents expect
+        # 8. Enrich market_data with context agents expect
         equity_syms = [k for k in market_data
                        if not k.startswith("_")
                        and k not in ("NIFTY", "VIX", "PCR", "FII_FLOW", "ADR", "DAYS_TO_EVENT")]
@@ -137,19 +181,21 @@ class BotRunner:
         market_data["_sentiment"]        = stock_sent
         market_data["_market_sentiment"] = mkt_sent
 
-        # 8. Run agent (exits + signals + execution — self-contained)
+        # 9. Run agent
         self._run_fn(self.agent, market_data, regime)
 
-        # 9. Update status
+        # 10. Update status
         elapsed              = time.time() - t0
         self.status          = "running"
         self.error_count     = 0
         self.last_error      = None
         self.last_run        = datetime.now().strftime("%H:%M:%S")
         self.last_run_time_s = round(elapsed, 1)
-        self.runs_total     += 1
 
-        logger.info(f"{self.agent_id} | tick done in {elapsed:.1f}s | regime={regime} | alloc={alloc}")
+        logger.info(
+            f"{self.agent_id} | tick done in {elapsed:.1f}s | regime={regime} | "
+            f"alloc={alloc:.2f} (mkt={market_alloc:.2f} × ai={self.head_ai_mult:.2f})"
+        )
 
     # ── Metrics (read by registry + HeadAI + dashboard) ──────────────────
     def metrics(self) -> dict:
@@ -164,6 +210,11 @@ class BotRunner:
             "agent_id":         self.agent_id,
             "market":           self.market.market_id,
             "status":           self.status,
+            "suspended":        self.suspended,
+            "suspended_reason": self.suspended_reason,
+            "suspended_until":  self.suspended_until.strftime("%H:%M %d-%b") if self.suspended_until else None,
+            "head_ai_mult":     round(self.head_ai_mult, 2),
+            "head_ai_note":     self.head_ai_note,
             "error_count":      self.error_count,
             "last_error":       self.last_error,
             "last_run":         self.last_run,

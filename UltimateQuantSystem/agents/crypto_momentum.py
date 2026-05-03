@@ -1,15 +1,18 @@
 """
 CryptoMomentumBot — 5-day breakout momentum on BTC/ETH/BNB.
 
+Uses 4h candles (50 bars ≈ 8 days from CryptoMarket).
+5-day high = max of last 30 × 4h bars (= 120h = 5 days).
+
 Entry conditions:
-  - Price breaks 5-day high (momentum confirmation)
+  - Price breaks 5-day high (closes[-1] > max(highs[-31:-1]))
   - RSI 50–72 (not overextended)
-  - Volume ratio >= 1.5x (breakout has volume)
+  - Volume ratio >= 1.5x current 4h bar vs average
   - Regime is BULL_LOW_VOL or CHOPPY (not BEAR)
   - Market sentiment score > -0.3 (Fear & Greed not extreme fear)
 
 Exit conditions:
-  - 3-day max hold
+  - 3-day max hold (= 18 × 4h bars)
   - 5% stop loss from entry
   - RSI > 78 (overbought exit)
 
@@ -22,14 +25,21 @@ from agents.base_agent import BaseAgent
 from loguru import logger
 
 
-SYMBOLS     = ["BTC/USDT", "ETH/USDT", "BNB/USDT"]
+SYMBOLS     = [
+    "BTC/USDT", "ETH/USDT", "BNB/USDT",   # large caps
+    "SOL/USDT", "AVAX/USDT",               # high-beta L1s
+    "FET/USDT", "RNDR/USDT", "TAO/USDT",   # AI narrative
+    "INJ/USDT", "WIF/USDT",                # DeFi + Solana meme
+]
 STOP_PCT    = 0.05      # 5% stop loss
-MAX_HOLD_D  = 3         # max days to hold
-MIN_VOL_RAT = 1.5       # minimum volume ratio for entry
+MAX_HOLD_D  = 3         # max days to hold (= 18 × 4h bars)
+MIN_VOL_RAT = 1.2       # minimum volume ratio for entry (lowered from 1.5 — CHOPPY markets)
 RSI_MIN     = 50
 RSI_MAX     = 72
 RSI_EXIT    = 78
 MIN_MKT_SENT= -0.3      # Fear & Greed floor
+# 5 days × 6 (4h bars per day) = 30 bars; exclude current bar → [-31:-1]
+FIVE_DAY_BARS = 30
 
 
 class CryptoMomentumBot(BaseAgent):
@@ -57,15 +67,16 @@ class CryptoMomentumBot(BaseAgent):
             vol_ratio  = data.get("volume_ratio", 0.0)
             ltp        = data.get("ltp",          0.0)
 
-            if len(closes) < 6:
+            # Need 30 bars for 5-day high + at least 14 for RSI + 1 current
+            if len(closes) < FIVE_DAY_BARS + 2:
                 continue
 
-            # 5-day high breakout
-            five_day_high = max(highs[-6:-1])
+            # 5-day high: max of last 30 complete 4h bars (excludes current bar)
+            five_day_high = max(highs[-(FIVE_DAY_BARS + 1):-1])
             if ltp <= five_day_high:
                 continue
 
-            # Volume confirmation
+            # Volume confirmation on current 4h bar
             if vol_ratio < MIN_VOL_RAT:
                 logger.info(f"{self.agent_id} | {symbol} | vol_ratio={vol_ratio:.1f}x < {MIN_VOL_RAT}x — skip")
                 continue
@@ -84,10 +95,8 @@ class CryptoMomentumBot(BaseAgent):
             if open_trades:
                 continue
 
-            # Risk amount: stop is STOP_PCT below entry
-            # quantity = risk_amount / (entry * STOP_PCT)  → already handled in _calc_quantity
             stop_price  = ltp * (1 - STOP_PCT)
-            risk_amount = ltp * STOP_PCT       # risk per unit × 1 unit (quantity scaled by RiskEngine)
+            risk_amount = ltp * STOP_PCT
 
             signals.append({
                 "symbol":      symbol,

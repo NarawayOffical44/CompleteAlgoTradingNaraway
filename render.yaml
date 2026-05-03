@@ -1,0 +1,12 @@
+services:
+  - type: worker
+    name: dailybot
+    runtime: python
+    rootDir: DailyBot
+    buildCommand: pip install -r requirements.txt
+    startCommand: python main.py
+    envVars:
+      - key: PYTHONUNBUFFERED
+        value: "1"
+      - key: PYTHONIOENCODING
+        value: "utf-8"

@@ -112,6 +112,12 @@ class MeanReversionAgent(BaseAgent):
 
         return signals
 
+    def reload_model(self):
+        """Hot-reload LightGBM from disk. Called by AutoTrainer after successful retrain."""
+        from data.lgbm_trainer import MeanReversionSignalModel
+        self.model = MeanReversionSignalModel.load()
+        logger.info(f"MeanReversionAgent | LightGBM model reloaded")
+
     def should_exit(self, trade_id: str, market_data: dict) -> tuple[bool, str]:
         trade = self.journal.trades.get(trade_id)
         if not trade:

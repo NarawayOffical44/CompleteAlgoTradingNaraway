@@ -5,7 +5,8 @@ Key differences from NSEMarket:
   - is_open() always returns True (24/7, 365 days)
   - is_safe() always True (no news filter yet)
   - Data from Binance public API via ccxt (no API key needed for OHLCV)
-  - Regime based on BTC trend (SMA20 vs SMA50)
+  - Uses 4h candles (50 candles ≈ 8 days) — avoids partial-day vol_ratio bug with 1d
+  - Regime based on BTC trend (SMA20 vs SMA50 on 4h)
   - No fundamentals (crypto has no ROE/D-E)
   - Sentiment: Fear & Greed index (optional, falls back to neutral)
   - 5-min cache on data (same as NSE, prevents hammering Binance)
@@ -66,7 +67,7 @@ class CryptoMarket(BaseMarket):
     def is_safe(self) -> tuple[bool, str]:
         return True, "ok"
 
-    # ── Market data (5-min cached) ────────────────────────────────────────
+    # ── Market data (4h OHLCV, 5-min cached) ─────────────────────────────
     def get_data(self) -> dict:
         with self._lock:
             if time.time() - self._data_cache_time < CACHE_TTL_S and self._data_cache:
@@ -75,8 +76,9 @@ class CryptoMarket(BaseMarket):
         result = {}
         for symbol in CRYPTO_SYMBOLS:
             try:
-                ohlcv = self._exchange.fetch_ohlcv(symbol, "1d", limit=60)
-                if not ohlcv or len(ohlcv) < 6:
+                # 4h candles, 50 bars ≈ 8.3 days — avoids partial-day volume bias
+                ohlcv = self._exchange.fetch_ohlcv(symbol, "4h", limit=50)
+                if not ohlcv or len(ohlcv) < 10:
                     continue
 
                 opens   = [c[1] for c in ohlcv]
@@ -85,10 +87,13 @@ class CryptoMarket(BaseMarket):
                 closes  = [c[4] for c in ohlcv]
                 volumes = [c[5] for c in ohlcv]
 
-                avg_vol  = sum(volumes[:-1]) / max(len(volumes) - 1, 1)
+                # vol_ratio: current 4h bar vs average of previous bars (all complete)
+                avg_vol   = sum(volumes[:-1]) / max(len(volumes) - 1, 1)
                 vol_ratio = volumes[-1] / avg_vol if avg_vol > 0 else 1.0
-                ret_1d   = (closes[-1] / closes[-2] - 1) * 100 if len(closes) > 1 else 0
-                ret_5d   = (closes[-1] / closes[-6] - 1) * 100 if len(closes) > 5 else 0
+
+                # 1d return ≈ 6 × 4h bars; 5d return ≈ 30 × 4h bars
+                ret_1d = (closes[-1] / closes[-7] - 1) * 100 if len(closes) > 6 else 0
+                ret_5d = (closes[-1] / closes[-31] - 1) * 100 if len(closes) > 30 else 0
 
                 result[symbol] = {
                     "ltp":          closes[-1],
@@ -101,7 +106,7 @@ class CryptoMarket(BaseMarket):
                     "1d_return":    round(ret_1d, 3),
                     "5d_return":    round(ret_5d, 3),
                 }
-                logger.debug(f"CryptoMarket | {symbol} ltp={closes[-1]:,.2f} 1d={ret_1d:+.2f}%")
+                logger.debug(f"CryptoMarket | {symbol} ltp={closes[-1]:,.2f} vol={vol_ratio:.2f}x 1d={ret_1d:+.2f}%")
 
             except Exception as e:
                 logger.warning(f"CryptoMarket | {symbol} fetch error: {e}")
@@ -112,12 +117,12 @@ class CryptoMarket(BaseMarket):
 
         return dict(result)
 
-    # ── Regime (BTC-based trend) ──────────────────────────────────────────
+    # ── Regime (BTC-based trend, 4h SMA) ─────────────────────────────────
     def get_regime(self, market_data: dict = None) -> str:
         if market_data is None:
             market_data = self.get_data()
 
-        btc = market_data.get("BTC/USDT", {})
+        btc    = market_data.get("BTC/USDT", {})
         closes = btc.get("closes", [])
 
         if len(closes) < 50:

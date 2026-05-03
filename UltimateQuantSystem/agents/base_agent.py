@@ -20,6 +20,17 @@ class BaseAgent(ABC):
         self.journal = journal
         self.broker = broker
         self.active = True
+        self.signal_stats = {
+            "evaluated":           0,
+            "signals_generated":   0,
+            "filtered_regime":     0,
+            "filtered_volume":     0,
+            "filtered_fundamentals": 0,
+            "filtered_sentiment":  0,
+            "filtered_lgbm":       0,
+            "filtered_zscore":     0,
+            "filtered_risk":       0,
+        }
         logger.info(f"Agent initialized | {agent_id}")
 
     # ── Implement in each agent ───────────────────────────────────────────
@@ -62,6 +73,7 @@ class BaseAgent(ABC):
         approved, reason = self.risk.approve_trade(self.agent_id, risk_amount)
         if not approved:
             logger.info(f"{self.agent_id} | BLOCKED | {symbol} | {reason}")
+            self.signal_stats["filtered_risk"] += 1
             return
 
         # Execute order

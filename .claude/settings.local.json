@@ -41,7 +41,19 @@
       "Bash(cd D:/Apps/AlgoTrading/QuantSystem && PYTHONPATH=. ../venv/Scripts/python.exe -c \"\nfrom data.fundamentals import FundamentalsData\nf = FundamentalsData\\(\\)\nfor sym in ['TCS', 'HDFCBANK', 'INFY', 'ICICIBANK']:\n    r = f.get\\(sym\\)\n    print\\(f'{sym}: PE={r[\\\\\"pe_ratio\\\\\"]} ROE={r[\\\\\"roe\\\\\"]} D/E={r[\\\\\"debt_to_equity\\\\\"]} score={r[\\\\\"fundamental_score\\\\\"]}'\\)\n\" 2>&1)",
       "WebFetch(domain:polymarket.com)",
       "Bash(cat:*)",
-      "Bash(git add:*)"
+      "Bash(git add:*)",
+      "Bash(cd D:/Apps/AlgoTrading && git reflog expire --expire=now --all && git gc --prune=now --aggressive && git push origin main --force 2>&1)",
+      "Bash(cd D:/Apps/AlgoTrading/UltimateQuantSystem && PYTHONPATH=. ../venv/Scripts/python.exe main.py --train 2>&1)",
+      "Bash(cd D:/Apps/AlgoTrading/UltimateQuantSystem && PYTHONPATH=. ../venv/Scripts/python.exe main.py --test 2>&1)",
+      "Bash(cd D:/Apps/AlgoTrading/UltimateQuantSystem && PYTHONPATH=. ../venv/Scripts/python.exe -c \"\nimport requests\nheaders = {'User-Agent': 'Mozilla/5.0 \\(Windows NT 10.0; Win64; x64\\) AppleWebKit/537.36', 'Accept': 'application/json'}\n# Direct YF test\nr = requests.get\\('https://query2.finance.yahoo.com/v8/finance/chart/TATAMOTORS.NS?interval=1d&range=1y', headers=headers, timeout=15\\)\nprint\\('Status:', r.status_code\\)\nimport json\ndata = r.json\\(\\)\nchart = data.get\\('chart', {}\\).get\\('result', []\\)\nprint\\('Chart results:', len\\(chart\\)\\)\nif chart:\n    q = chart[0]['indicators']['quote'][0]\n    closes = [x for x in q.get\\('close', []\\) if x is not None]\n    print\\('Closes:', len\\(closes\\)\\)\nelse:\n    print\\('Error:', data.get\\('chart', {}\\).get\\('error'\\)\\)\n\" 2>&1)",
+      "Bash(cd D:/Apps/AlgoTrading/UltimateQuantSystem && PYTHONPATH=. ../venv/Scripts/python.exe -c \"\nfrom markets import NSEMarket, CryptoMarket, MCXMarket, EventMarket\nfrom bots import BotRunner\nfrom registry import BotRegistry\nfrom head_ai import HeadAI\nfrom dashboard import TerminalDashboard\nfrom journal.trade_journal import TradeJournal\nprint\\('All imports OK'\\)\n\n# Verify EventMarket\nem = EventMarket\\('test'\\)\nem.add_event\\('2026-02-01', 'Budget', before_days=1, after_days=2\\)\nem.add_expiry_thursdays\\(2026\\)\nprint\\(f'EventMarket: {len\\(em._events\\)} events registered'\\)\n\n# Verify MCXMarket\nmcx = MCXMarket\\(\\)\nprint\\(f'MCXMarket: {len\\(mcx._tickers\\)} tickers'\\)\n\n# Verify BotRegistry lifecycle methods\nreg = BotRegistry\\(\\)\nprint\\('BotRegistry: suspend/resume methods available =', hasattr\\(reg, 'suspend_bot'\\)\\)\nprint\\('BotRegistry: set_ai_mult available =', hasattr\\(reg, 'set_ai_mult'\\)\\)\nprint\\('BotRegistry: recent_decisions available =', hasattr\\(reg, 'recent_decisions'\\)\\)\n\" 2>&1)",
+      "Bash(cd /d/Apps/AlgoTrading && git push origin main 2>&1)",
+      "Bash(cd /d/Apps/AlgoTrading && git add DailyBot/exchange.py DailyBot/config.py && git commit -m \"Fix: switch to Bybit public API in SIM_MODE \\(Binance blocks Render US servers\\)\" && git push origin main 2>&1)",
+      "Bash(cd /d/Apps/AlgoTrading && git config --global credential.helper && git config credential.helper 2>&1)",
+      "Bash(cd /d/Apps/AlgoTrading && git push https://NarawayOffical44@github.com/NarawayOffical44/CompleteAlgoTradingNaraway.git main 2>&1)",
+      "Bash(cd /d/Apps/AlgoTrading && git fetch origin && git log --oneline origin/main -3 2>&1)",
+      "Bash(cd /d/Apps/AlgoTrading && git add DailyBot/exchange.py && git commit -m \"Fix: switch sim mode data source to KuCoin \\(no geo-blocks on cloud servers\\)\" && git push origin main 2>&1)",
+      "Bash(cd /d/Apps/AlgoTrading && git add DailyBot/main.py && git commit -m \"Add health server so Render web service stays alive\" && git push origin main 2>&1)"
     ]
   },
   "model": "claude-sonnet-4-6"
