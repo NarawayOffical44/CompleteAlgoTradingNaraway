@@ -194,10 +194,12 @@ def _maybe_send_heartbeat(state: dict, ind: dict | None = None) -> None:
     else:
         lines.append("No open position")
 
+    remaining   = f"Rs{max(0, 20 - summary['net_inr']):.2f} remaining"
+    target_str  = "MET" if summary["target_met"] else remaining
     lines += [
         f"Scans today: {state.get('scans_today', 0)}  Trades: {summary['trades']}",
         f"Daily — Gross: Rs{summary['gross_inr']:.2f}  Tax: Rs{summary['tax_inr']:.2f}  Net: Rs{summary['net_inr']:.2f}",
-        f"Target: {'MET ✓' if summary['target_met'] else f'Rs{max(0, 20 - summary[\"net_inr\"]):.2f} remaining'}",
+        f"Target: {target_str}",
     ]
 
     tg("\n".join(l for l in lines if l))
