@@ -37,7 +37,7 @@ MAX_HOLD_HOURS        = 3
 FEES_PCT_ROUNDTRIP    = 0.001   # Binance taker 0.05% × 2 sides
 
 # ── Daily limits ──────────────────────────────────────────────────────────────
-MAX_TRADES_PER_DAY   = 2
+MAX_TRADES_PER_DAY   = 20
 INDIA_TAX_RATE       = 0.30
 DAILY_NET_TARGET_INR = 20.0
 # Gross target auto-calculated: ₹20 / 0.70 = ₹28.57

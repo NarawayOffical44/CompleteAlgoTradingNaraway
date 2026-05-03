@@ -228,9 +228,7 @@ def tick(ex, state: dict) -> dict:
     daily_net = daily_net_inr()
 
     if daily_net >= 20.0:
-        logger.info(f"Target met: Rs{daily_net:.2f} net. Done for today.")
-        _maybe_send_heartbeat(state)
-        return state
+        logger.info(f"Target met: Rs{daily_net:.2f} net. Continuing to trade.")
     if _daily_gross_pnl_inr(state) <= -MAX_DAILY_LOSS_INR:
         logger.info("Loss limit hit. Stopped for today.")
         return state
@@ -335,7 +333,7 @@ def tick(ex, state: dict) -> dict:
                     _print_summary()
 
                     if daily_net_inr() >= 20.0:
-                        tg(f"<b>TARGET MET</b>  Net today: Rs{daily_net_inr():.2f}  ({summary['trades']} trade(s))")
+                        tg(f"<b>TARGET MET - still running</b>  Net today: Rs{daily_net_inr():.2f}  ({summary['trades']} trade(s))")
             else:
                 state["open_trade"] = None
 
