@@ -1,10 +1,11 @@
 services:
-  - type: worker
+  - type: web
     name: dailybot
     runtime: python
     rootDir: DailyBot
     buildCommand: pip install -r requirements.txt
     startCommand: python main.py
+    healthCheckPath: /
     envVars:
       - key: PYTHONUNBUFFERED
         value: "1"
