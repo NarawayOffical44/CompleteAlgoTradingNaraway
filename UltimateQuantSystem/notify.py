@@ -22,6 +22,7 @@ If either var is missing, notify() is a silent no-op — nothing breaks.
 """
 
 import os
+import time
 import requests
 from loguru import logger
 from dotenv import load_dotenv
@@ -46,16 +47,30 @@ def notify(message: str, parse_mode: str = "HTML") -> bool:
     """
     if not _ENABLED:
         return False
-    try:
-        resp = requests.post(_URL, json={
-            "chat_id":    _CHAT_ID,
-            "text":       message,
-            "parse_mode": parse_mode,
-        }, timeout=10)
-        if not resp.ok:
+    payload = {
+        "chat_id": _CHAT_ID,
+        "text": message[:3900],
+        "parse_mode": parse_mode,
+        "disable_web_page_preview": True,
+    }
+    for attempt in range(1, 4):
+        try:
+            resp = requests.post(_URL, json=payload, timeout=10)
+            if resp.ok:
+                return True
+            retry_after = 0
+            try:
+                retry_after = int(resp.json().get("parameters", {}).get("retry_after", 0))
+            except Exception:
+                pass
             logger.warning(f"Telegram | HTTP {resp.status_code}: {resp.text[:120]}")
-            return False
-        return True
-    except Exception as e:
-        logger.warning(f"Telegram | send failed: {e}")
-        return False
+            if resp.status_code == 429 and retry_after:
+                time.sleep(min(retry_after, 30))
+            elif attempt < 3:
+                time.sleep(attempt)
+        except Exception as e:
+            err = str(e).replace(_TOKEN, "<telegram-token>")
+            logger.warning(f"Telegram | send failed: {err}")
+            if attempt < 3:
+                time.sleep(attempt)
+    return False

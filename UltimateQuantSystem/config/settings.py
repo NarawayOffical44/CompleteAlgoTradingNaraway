@@ -20,6 +20,8 @@ class RiskConfig:
 class AppConfig:
     trading_mode: str = os.getenv("TRADING_MODE", "paper")   # paper | live
     starting_capital: float = float(os.getenv("STARTING_CAPITAL", 10000))
+    account_currency: str = os.getenv("ACCOUNT_CURRENCY", "INR")
+    quote_to_account_rate: float = float(os.getenv("QUOTE_TO_ACCOUNT_RATE", os.getenv("USDINR_RATE", 1)))
     dhan_client_id: str = os.getenv("DHAN_CLIENT_ID", "")
     dhan_access_token: str = os.getenv("DHAN_ACCESS_TOKEN", "")
     anthropic_api_key: str = os.getenv("ANTHROPIC_API_KEY", "")
@@ -29,6 +31,9 @@ class AppConfig:
     risk: RiskConfig = None
 
     def __post_init__(self):
+        self.trading_mode = str(self.trading_mode).split("#", 1)[0].strip().lower()
+        if self.trading_mode not in {"paper", "live"}:
+            self.trading_mode = "paper"
         self.risk = RiskConfig()
 
 

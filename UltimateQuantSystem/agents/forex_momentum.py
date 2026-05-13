@@ -35,19 +35,24 @@ class ForexMomentumBot(BaseAgent):
         quantity    = signal.get("quantity", FOREX_LOT)
         thesis      = signal.get("thesis", "")
 
-        approved, reason = self.risk.approve_trade(self.agent_id, risk_amount)
+        trade_id = str(uuid.uuid4())[:8]
+        approved, reason = self.risk.approve_and_open(self.agent_id, trade_id, risk_amount)
         if not approved:
             logger.info(f"{self.agent_id} | BLOCKED | {symbol} | {reason}")
             return
 
         order_type = "BUY" if direction == "long" else "SELL"
-        self.broker.place_order(
-            symbol=symbol, exchange=self._exchange,
-            order_type=order_type, quantity=int(quantity), price=entry_price,
-        )
+        try:
+            self.broker.place_order(
+                symbol=symbol, exchange=self._exchange,
+                order_type=order_type, quantity=int(quantity), price=entry_price,
+                client_order_id=f"{self.agent_id}:{trade_id}:OPEN",
+            )
+        except Exception as e:
+            self.risk.cancel_open(self.agent_id, trade_id, str(e))
+            logger.error(f"{self.agent_id} | ORDER FAILED | {symbol} | {e}")
+            return
 
-        trade_id = str(uuid.uuid4())[:8]
-        self.risk.register_open(self.agent_id, trade_id, risk_amount)
         self.journal.open_trade(
             trade_id=trade_id, agent_id=self.agent_id, symbol=symbol,
             direction=direction, entry_price=entry_price, quantity=quantity,
@@ -57,8 +62,7 @@ class ForexMomentumBot(BaseAgent):
 
     # ── Override _check_exits for FOREX exchange ──────────────────────────
     def _check_exits(self, market_data: dict):
-        open_trades = [t for t in self.journal.trades.values()
-                       if t.agent_id == self.agent_id and t.status == "open"]
+        open_trades = self.journal.open_trades(agent_id=self.agent_id)
         for trade in open_trades:
             should_exit, reason = self.should_exit(trade.trade_id, market_data)
             if should_exit:
@@ -67,6 +71,7 @@ class ForexMomentumBot(BaseAgent):
                 self.broker.place_order(
                     symbol=trade.symbol, exchange=self._exchange,
                     order_type=order_type, quantity=int(trade.quantity), price=exit_price,
+                    client_order_id=f"{self.agent_id}:{trade.trade_id}:CLOSE",
                 )
                 closed = self.journal.close_trade(trade.trade_id, exit_price, reason)
                 self.risk.register_close(self.agent_id, trade.trade_id, closed.pnl)
@@ -89,7 +94,7 @@ class ForexMomentumBot(BaseAgent):
                 continue
 
             # Already have open position?
-            open_pos = [t for t in self.journal.trades.values()
+            open_pos = [t for t in self.journal.snapshot()
                         if t.agent_id == self.agent_id
                         and t.symbol == symbol and t.status == "open"]
             if open_pos:
@@ -109,14 +114,17 @@ class ForexMomentumBot(BaseAgent):
             if not direction:
                 continue
 
-            risk_amount = FOREX_LOT * ltp * STOP_PCT
+            from config import config
+            quote_to_account = max(float(getattr(config, "quote_to_account_rate", 1.0)), 1e-9)
+            risk_amount = self.risk.state.capital * 0.005
+            quantity = max(1.0, risk_amount / (ltp * STOP_PCT * quote_to_account))
 
             signals.append({
                 "symbol":      symbol,
                 "direction":   direction,
                 "entry_price": ltp,
                 "risk_amount": risk_amount,
-                "quantity":    FOREX_LOT,
+                "quantity":    quantity,
                 "thesis": (f"EMA20={ema20:.5f} EMA50={ema50:.5f} | "
                            f"RSI={rsi:.1f} | vol={vol_ratio:.2f}x | "
                            f"regime={regime}"),
@@ -128,7 +136,7 @@ class ForexMomentumBot(BaseAgent):
     # ── Exit logic ────────────────────────────────────────────────────────
     def should_exit(self, trade_id: str, market_data: dict) -> tuple[bool, str]:
         from datetime import datetime
-        trade  = self.journal.trades.get(trade_id)
+        trade  = self.journal.get_trade(trade_id)
         if not trade:
             return False, ""
 

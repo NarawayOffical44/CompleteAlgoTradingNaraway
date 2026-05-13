@@ -33,9 +33,13 @@ class BotRegistry:
         for runner in self._runners.values():
             runner.start()
 
-    def stop_all(self) -> None:
+    def stop_all(self, join: bool = True, timeout: float = 10.0) -> None:
         for runner in self._runners.values():
             runner.stop()
+        if join:
+            for runner in self._runners.values():
+                if runner.is_alive():
+                    runner.stop(join=True, timeout=timeout)
         logger.info("BotRegistry | all bots signalled to stop")
 
     def stop_bot(self, agent_id: str) -> bool:

@@ -46,6 +46,7 @@ STOP_LOSS_PCT     = 0.07        # -7% price move = -21% at 3x
 MAX_HOLD_DAYS     = 5
 MAX_CONCURRENT    = 4
 POSITION_SIZE_INR = 10_000      # Rs per trade (capital, not notional)
+MAX_RISK_PCT      = 0.005       # 0.5% capital cap for small-account consistency
 
 RSI_LONG_MIN      = 45          # widened: catch momentum earlier
 RSI_LONG_MAX      = 75
@@ -74,21 +75,25 @@ class PerpFuturesBot(BaseAgent):
         risk_amount = signal["risk_amount"]
         thesis      = signal.get("thesis", "")
 
-        approved, reason = self.risk.approve_trade(self.agent_id, risk_amount)
+        trade_id = str(uuid.uuid4())[:8]
+        approved, reason = self.risk.approve_and_open(self.agent_id, trade_id, risk_amount)
         if not approved:
             logger.info(f"{self.agent_id} | BLOCKED | {symbol} | {reason}")
             return
 
         order_type = "BUY" if direction == "long" else "SELL"
-        self.broker.place_order(
-            symbol=symbol, exchange=self._exchange,
-            order_type=order_type, quantity=1, price=entry_price,
-        )
-
-        trade_id = str(uuid.uuid4())[:8]
+        try:
+            self.broker.place_order(
+                symbol=symbol, exchange=self._exchange,
+                order_type=order_type, quantity=1, price=entry_price,
+                client_order_id=f"{self.agent_id}:{trade_id}:OPEN",
+            )
+        except Exception as e:
+            self.risk.cancel_open(self.agent_id, trade_id, str(e))
+            logger.error(f"{self.agent_id} | ORDER FAILED | {symbol} | {e}")
+            return
         self._entry_regimes[trade_id] = regime
 
-        self.risk.register_open(self.agent_id, trade_id, risk_amount)
         self.journal.open_trade(
             trade_id=trade_id, agent_id=self.agent_id, symbol=symbol,
             direction=direction, entry_price=entry_price,
@@ -97,7 +102,7 @@ class PerpFuturesBot(BaseAgent):
             thesis=thesis, regime=regime,
         )
 
-        notional_inr = POSITION_SIZE_INR * self.leverage
+        notional_inr = (risk_amount / STOP_LOSS_PCT) * self.leverage
         logger.info(
             f"{self.agent_id} | ENTERED {direction.upper()} | {symbol} @ {entry_price:.4f} | "
             f"{self.leverage}x | notional=Rs{notional_inr:,.0f} | {thesis[:60]}"
@@ -105,8 +110,7 @@ class PerpFuturesBot(BaseAgent):
 
     # ── Override _check_exits for PERP ───────────────────────────────────
     def _check_exits(self, market_data: dict):
-        open_trades = [t for t in self.journal.trades.values()
-                       if t.agent_id == self.agent_id and t.status == "open"]
+        open_trades = self.journal.open_trades(agent_id=self.agent_id)
         regime = market_data.get("_regime", "BULL")
 
         for trade in open_trades:
@@ -117,12 +121,14 @@ class PerpFuturesBot(BaseAgent):
                 self.broker.place_order(
                     symbol=trade.symbol, exchange=self._exchange,
                     order_type=order_type, quantity=1, price=ltp,
+                    client_order_id=f"{self.agent_id}:{trade.trade_id}:CLOSE",
                 )
                 # P&L = capital × leverage × price_change_pct
                 pnl_pct = (ltp - trade.entry_price) / trade.entry_price
                 if trade.direction == "short":
                     pnl_pct = -pnl_pct
-                pnl_inr = POSITION_SIZE_INR * self.leverage * pnl_pct
+                capital_used = trade.risk_amount / STOP_LOSS_PCT
+                pnl_inr = capital_used * self.leverage * pnl_pct
 
                 closed = self.journal.close_trade(trade.trade_id, ltp, reason)
                 self.risk.register_close(self.agent_id, trade.trade_id, pnl_inr)
@@ -143,7 +149,7 @@ class PerpFuturesBot(BaseAgent):
 
         # Count concurrent positions
         open_count = sum(
-            1 for t in self.journal.trades.values()
+            1 for t in self.journal.snapshot()
             if t.agent_id == self.agent_id and t.status == "open"
         )
         if open_count >= MAX_CONCURRENT:
@@ -164,7 +170,7 @@ class PerpFuturesBot(BaseAgent):
                 continue
 
             # Already have position in this symbol?
-            existing = [t for t in self.journal.trades.values()
+            existing = [t for t in self.journal.snapshot()
                         if t.agent_id == self.agent_id
                         and t.symbol == symbol and t.status == "open"]
             if existing:
@@ -197,7 +203,7 @@ class PerpFuturesBot(BaseAgent):
                 continue
 
             # Risk = capital × stop_pct (stop before liquidation)
-            risk_amount = POSITION_SIZE_INR * STOP_LOSS_PCT
+            risk_amount = min(POSITION_SIZE_INR * STOP_LOSS_PCT, self.risk.state.capital * MAX_RISK_PCT)
 
             signals.append({
                 "symbol":      symbol,
@@ -221,7 +227,7 @@ class PerpFuturesBot(BaseAgent):
 
     # ── Exit logic ────────────────────────────────────────────────────────
     def should_exit(self, trade_id: str, market_data: dict) -> tuple[bool, str]:
-        trade  = self.journal.trades.get(trade_id)
+        trade  = self.journal.get_trade(trade_id)
         if not trade:
             return False, ""
 

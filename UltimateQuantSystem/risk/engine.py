@@ -145,6 +145,14 @@ class RiskEngine:
             self.state.open_positions[key] = risk_amount
             logger.info(f"OPEN | {key} | risk={risk_amount:.2f}")
 
+    def cancel_open(self, agent_id: str, trade_id: str, reason: str = ""):
+        """Remove a reserved risk slot when order placement fails."""
+        with self._lock:
+            key = f"{agent_id}:{trade_id}"
+            removed = self.state.open_positions.pop(key, None)
+        if removed is not None:
+            logger.warning(f"CANCEL OPEN | {key} | risk={removed:.2f} | reason={reason}")
+
     def register_close(self, agent_id: str, trade_id: str, pnl: float):
         with self._lock:
             key = f"{agent_id}:{trade_id}"

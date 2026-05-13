@@ -104,6 +104,23 @@ class TradeJournal:
         logger.info(f"JOURNAL CLOSE | {trade_id} | pnl={r.pnl:.2f} ({r.pnl_pct:.2f}%) | {exit_reason}")
         return r
 
+    def get_trade(self, trade_id: str) -> TradeRecord | None:
+        with self._lock:
+            return self.trades.get(trade_id)
+
+    def open_trades(self, agent_id: str = None, symbol: str = None) -> list[TradeRecord]:
+        with self._lock:
+            trades = [t for t in self.trades.values() if t.status == "open"]
+        if agent_id:
+            trades = [t for t in trades if t.agent_id == agent_id]
+        if symbol:
+            trades = [t for t in trades if t.symbol == symbol]
+        return trades
+
+    def snapshot(self) -> list[TradeRecord]:
+        with self._lock:
+            return list(self.trades.values())
+
     # ── Performance summary ───────────────────────────────────────────────
     def summary(self, agent_id: str = None) -> dict:
         with self._lock:

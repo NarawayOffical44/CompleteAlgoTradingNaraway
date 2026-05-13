@@ -21,16 +21,18 @@ Position sizing:
   - Stop is 5% below entry → quantity = risk_amount / (entry * 0.05)
 """
 
+import os
 from agents.base_agent import BaseAgent
 from loguru import logger
 
 
-SYMBOLS     = [
+DEFAULT_SYMBOLS = [
     "BTC/USDT", "ETH/USDT", "BNB/USDT",   # large caps
     "SOL/USDT", "AVAX/USDT",               # high-beta L1s
     "FET/USDT", "RNDR/USDT", "TAO/USDT",   # AI narrative
     "INJ/USDT", "WIF/USDT",                # DeFi + Solana meme
 ]
+SYMBOLS = [s.strip() for s in os.getenv("CRYPTO_SYMBOLS", ",".join(DEFAULT_SYMBOLS)).split(",") if s.strip()]
 STOP_PCT    = 0.05      # 5% stop loss
 MAX_HOLD_D  = 3         # max days to hold (= 18 × 4h bars)
 MIN_VOL_RAT = 1.2       # minimum volume ratio for entry (lowered from 1.5 — CHOPPY markets)
@@ -43,6 +45,7 @@ FIVE_DAY_BARS = 30
 
 
 class CryptoMomentumBot(BaseAgent):
+    _exchange = "CRYPTO"
 
     # ── Signal generation ─────────────────────────────────────────────────
     def generate_signals(self, market_data: dict) -> list[dict]:
@@ -88,7 +91,7 @@ class CryptoMomentumBot(BaseAgent):
                 continue
 
             # Already have open position in this symbol?
-            open_trades = [t for t in self.journal.trades.values()
+            open_trades = [t for t in self.journal.snapshot()
                            if t.agent_id == self.agent_id
                            and t.symbol == symbol
                            and t.status == "open"]
@@ -96,7 +99,7 @@ class CryptoMomentumBot(BaseAgent):
                 continue
 
             stop_price  = ltp * (1 - STOP_PCT)
-            risk_amount = ltp * STOP_PCT
+            risk_amount = self.risk.state.capital * 0.01
 
             signals.append({
                 "symbol":      symbol,
@@ -117,7 +120,7 @@ class CryptoMomentumBot(BaseAgent):
     def should_exit(self, trade_id: str, market_data: dict) -> tuple[bool, str]:
         from datetime import datetime
 
-        trade = self.journal.trades.get(trade_id)
+        trade = self.journal.get_trade(trade_id)
         if not trade:
             return False, ""
 
@@ -168,5 +171,7 @@ class CryptoMomentumBot(BaseAgent):
     @staticmethod
     def _calc_quantity(risk_amount: float, entry_price: float) -> float:
         """Override: crypto quantity = risk_amount / (entry * STOP_PCT)."""
+        from config import config
         stop_distance = entry_price * STOP_PCT
-        return max(0.001, risk_amount / stop_distance) if stop_distance > 0 else 0.001
+        quote_to_account = max(float(getattr(config, "quote_to_account_rate", 1.0)), 1e-9)
+        return max(0.000001, risk_amount / (stop_distance * quote_to_account)) if stop_distance > 0 else 0.000001

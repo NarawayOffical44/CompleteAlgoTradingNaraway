@@ -35,6 +35,7 @@ import json
 import time
 import threading
 import requests
+from html import escape
 from datetime import datetime
 from loguru import logger
 
@@ -82,8 +83,10 @@ class HeadAI:
         self._thread.start()
         logger.info("HeadAI | started")
 
-    def stop(self):
+    def stop(self, join: bool = False, timeout: float = 10.0):
         self._stop_event.set()
+        if join and self._thread and self._thread.is_alive():
+            self._thread.join(timeout=timeout)
 
     # ── Main loop ─────────────────────────────────────────────────────────
     def _loop(self):
@@ -138,6 +141,7 @@ class HeadAI:
 
         # Step 6: Execute decisions
         executed = self._execute_decisions(decisions, metrics)
+        insights = self._sanitize_insights(insights, metrics, executed)
 
         # Step 7: Compose final insights from decisions + rule insights
         if not insights:
@@ -197,10 +201,13 @@ class HeadAI:
 
             # Guard: don't act on bots with too few trades (no meaningful signal)
             trades = m.get("trades", 0)
-            if action in ("SUSPEND", "REDUCE", "BOOST") and trades < MIN_TRADES_FOR_DECISION:
+            critical_error = m.get("error_count", 0) >= SUSPEND_ERROR_THRESHOLD or m.get("status") == "error"
+            if action in ("REDUCE", "BOOST") and trades < MIN_TRADES_FOR_DECISION:
                 logger.info(
                     f"HeadAI | skip {action} on {agent_id} — only {trades} trades (need {MIN_TRADES_FOR_DECISION})"
                 )
+                continue
+            if action == "SUSPEND" and trades < MIN_TRADES_FOR_DECISION and not critical_error:
                 continue
 
             # Don't SUSPEND an already-suspended bot
@@ -233,6 +240,41 @@ class HeadAI:
                 pass    # no-op, log nothing
 
         return executed
+
+    def _sanitize_insights(self, insights: list[str], metrics: list[dict], executed: list[dict]) -> list[str]:
+        """Remove LLM claims that contradict measured bot state or executed controls."""
+        if not insights:
+            return []
+
+        metrics_by_id = {m.get("agent_id", ""): m for m in metrics}
+        executed_actions = {
+            (d.get("agent_id", ""), d.get("action", "").upper())
+            for d in executed
+        }
+
+        cleaned = []
+        bad_words = ("loss", "losing", "underperform", "weak", "reduced", "suspend", "suspended")
+        control_words = {"reduced": "REDUCE", "suspend": "SUSPEND", "suspended": "SUSPEND"}
+
+        for insight in insights:
+            low = insight.lower()
+            drop = False
+            for aid, metric in metrics_by_id.items():
+                aid_low = aid.lower()
+                if not aid_low or aid_low not in low:
+                    continue
+                if metric.get("trades", 0) == 0 and any(w in low for w in bad_words):
+                    drop = True
+                    break
+                for word, action in control_words.items():
+                    if word in low and (aid, action) not in executed_actions:
+                        drop = True
+                        break
+                if drop:
+                    break
+            if not drop:
+                cleaned.append(insight)
+        return cleaned
 
     # ── LLM call (Groq → Anthropic → fallback) ───────────────────────────
     def _call_llm(self, metrics: list, ranking: list, alerts: list) -> dict:
@@ -356,17 +398,23 @@ Respond with ONLY this JSON (no other text):
             sharpe = m.get("sharpe", 0.0)
             win    = m.get("win_rate", 0.0)
 
-            # Skip bots without enough data
-            if trades < MIN_TRADES_FOR_DECISION:
-                continue
             if m.get("suspended", False):
                 continue
 
-            if pnl < SUSPEND_LOSS_THRESHOLD or errors >= SUSPEND_ERROR_THRESHOLD:
+            if errors >= SUSPEND_ERROR_THRESHOLD:
                 decisions.append({
                     "agent_id":      aid,
                     "action":        "SUSPEND",
-                    "reason":        f"Loss Rs{pnl:,.0f} or {errors} errors",
+                    "reason":        f"{errors} consecutive errors",
+                    "suspend_hours": 24,
+                })
+            elif trades < MIN_TRADES_FOR_DECISION:
+                continue
+            elif pnl < SUSPEND_LOSS_THRESHOLD:
+                decisions.append({
+                    "agent_id":      aid,
+                    "action":        "SUSPEND",
+                    "reason":        f"Loss Rs{pnl:,.0f}",
                     "suspend_hours": 24,
                 })
             elif pnl < REDUCE_LOSS_THRESHOLD or errors >= REDUCE_ERROR_THRESHOLD:
@@ -463,34 +511,37 @@ Respond with ONLY this JSON (no other text):
         if not self.tg_token or not self.tg_chat_id:
             return
 
-        lines = ["*UltimateQuantSystem — HeadAI Report*", ""]
+        lines = ["<b>UltimateQuantSystem - HeadAI Report</b>", ""]
 
         if ranking:
-            lines.append("*Rankings:*")
+            lines.append("<b>Rankings:</b>")
             for m in ranking[:3]:
                 pnl_str = f"Rs{m.get('total_pnl', 0):+,.0f}"
                 tag     = " [SUSPENDED]" if m.get("suspended") else ""
                 lines.append(
-                    f"  #{m.get('rank','-')} {m['agent_id']} | {pnl_str} | "
-                    f"win={m.get('win_rate',0):.0f}%{tag}"
+                    f"#{m.get('rank','-')} <code>{escape(m['agent_id'])}</code> | {pnl_str} | "
+                    f"win={m.get('win_rate',0):.0f}%{escape(tag)}"
                 )
             lines.append("")
 
         if decisions:
-            lines.append("*Actions Taken:*")
+            lines.append("<b>Actions Taken:</b>")
             for d in decisions[:5]:
                 action_icon = {"SUSPEND": "🔴", "REDUCE": "🟡", "BOOST": "🟢"}.get(d["action"], "⚪")
-                lines.append(f"  {action_icon} {d['action']} {d['agent_id']}: {d['reason'][:50]}")
+                lines.append(
+                    f"{escape(d['action'])} <code>{escape(d['agent_id'])}</code>: "
+                    f"{escape(d.get('reason', '')[:70])}"
+                )
             lines.append("")
 
         if alerts:
-            lines.append("*Alerts:*")
+            lines.append("<b>Alerts:</b>")
             for a in alerts[:4]:
-                lines.append(f"  ⚠️ {a}")
+                lines.append(escape(a[:120]))
             lines.append("")
 
         if insights:
-            lines.append(f"💡 {insights[0]}")
+            lines.append(escape(insights[0][:160]))
 
         message = "\n".join(lines)
         url     = f"https://api.telegram.org/bot{self.tg_token}/sendMessage"
@@ -498,15 +549,17 @@ Respond with ONLY this JSON (no other text):
         try:
             resp = requests.post(url, json={
                 "chat_id":    self.tg_chat_id,
-                "text":       message,
-                "parse_mode": "Markdown",
+                "text":       message[:3900],
+                "parse_mode": "HTML",
+                "disable_web_page_preview": True,
             }, timeout=10)
             if resp.ok:
                 logger.info("HeadAI | Telegram sent")
             else:
                 logger.warning(f"HeadAI | Telegram failed: {resp.text[:100]}")
         except Exception as e:
-            logger.warning(f"HeadAI | Telegram error: {e}")
+            err = str(e).replace(self.tg_token, "<telegram-token>")
+            logger.warning(f"HeadAI | Telegram error: {err}")
 
     # ── Last report (for dashboard) ───────────────────────────────────────
     def last_report(self) -> dict:

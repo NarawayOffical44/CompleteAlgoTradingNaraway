@@ -250,8 +250,8 @@ class PolymarketMarket(BaseMarket):
             market_data = self.get_data()
 
         movers = sum(
-            1 for v in market_data.values()
-            if not str(v).startswith("_") and abs(v.get("price_change_1h", 0)) > 5.0
+            1 for k, v in market_data.items()
+            if not k.startswith("_") and isinstance(v, dict) and abs(v.get("price_change_1h", 0)) > 5.0
         )
         total  = max(len([k for k in market_data if not k.startswith("_")]), 1)
         pct    = movers / total
@@ -279,8 +279,11 @@ class PolymarketMarket(BaseMarket):
 
     def get_sentiment(self, symbols: list, market_data: dict) -> tuple[dict, dict]:
         # Use average price movement as market sentiment proxy
-        changes = [v.get("price_change_1h", 0) for v in market_data.values()
-                   if not str(v).startswith("_")]
+        changes = [
+            v.get("price_change_1h", 0)
+            for k, v in market_data.items()
+            if not k.startswith("_") and isinstance(v, dict)
+        ]
         avg_chg = sum(changes) / max(len(changes), 1)
         score   = max(-1.0, min(1.0, avg_chg / 20))   # normalise ±20% → ±1
         mkt_sent = {"score": round(score, 2), "label": "active" if abs(score) > 0.2 else "neutral"}

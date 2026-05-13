@@ -202,7 +202,9 @@ class FundamentalsData:
 
     def _save_cache(self, key: str, data: dict):
         path = CACHE_DIR / f"{key}.json"
-        path.write_text(json.dumps(data))
+        tmp_path = CACHE_DIR / f"{key}.{time.time_ns()}.tmp"
+        tmp_path.write_text(json.dumps(data))
+        tmp_path.replace(path)
 
     @staticmethod
     def _empty() -> dict:

@@ -46,7 +46,7 @@ class MeanReversionAgent(BaseAgent):
             logger.info(f"MeanRev | regime={regime} not safe — skip all")
             return signals
 
-        open_count = sum(1 for t in self.journal.trades.values()
+        open_count = sum(1 for t in self.journal.snapshot()
                          if t.agent_id == self.agent_id and t.status == "open")
         if open_count >= self.max_positions:
             return signals
@@ -119,7 +119,7 @@ class MeanReversionAgent(BaseAgent):
         logger.info(f"MeanReversionAgent | LightGBM model reloaded")
 
     def should_exit(self, trade_id: str, market_data: dict) -> tuple[bool, str]:
-        trade = self.journal.trades.get(trade_id)
+        trade = self.journal.get_trade(trade_id)
         if not trade:
             return False, ""
 

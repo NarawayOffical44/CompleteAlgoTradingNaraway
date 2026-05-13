@@ -40,7 +40,7 @@ _STOP_CHECK_S      = 5          # check stop flag every 5s
 class BotRunner:
 
     def __init__(self, agent, market, risk_engine, run_fn=None,
-                 interval_s: int = DEFAULT_INTERVAL_S):
+                 interval_s: int = DEFAULT_INTERVAL_S, resources=None):
         """
         agent      : any BaseAgent subclass (or options_bot / standalone)
         market     : BaseMarket subclass — defines hours, data, regime, alloc
@@ -54,8 +54,11 @@ class BotRunner:
         self.agent_id    = getattr(agent, "agent_id", getattr(agent, "underlying", "unknown"))
         self.market      = market
         self.risk        = risk_engine
+        self.resources   = resources
         self._run_fn     = run_fn or (lambda a, data, regime: a.run(data, regime=regime))
         self._interval_s = interval_s
+        if resources is not None:
+            setattr(self.agent, "resources", resources)
 
         # ── HeadAI controls ───────────────────────────────────────────────
         self.head_ai_mult    = 1.0
@@ -91,9 +94,11 @@ class BotRunner:
         self._thread.start()
         logger.info(f"BotRunner | {self.agent_id} | started on {self.market.market_id} | interval={self._interval_s}s")
 
-    def stop(self):
+    def stop(self, join: bool = False, timeout: float = 10.0):
         self._stop_event.set()
         logger.info(f"BotRunner | {self.agent_id} | stop requested")
+        if join and self._thread and self._thread.is_alive():
+            self._thread.join(timeout=timeout)
 
     def is_alive(self) -> bool:
         return self._thread is not None and self._thread.is_alive()
@@ -107,7 +112,7 @@ class BotRunner:
                 self.status      = "error"
                 self.error_count += 1
                 self.last_error  = str(e)
-                logger.error(f"BotRunner | {self.agent_id} | loop error: {e}")
+                logger.exception(f"BotRunner | {self.agent_id} | loop error: {e}")
 
             elapsed = 0
             while elapsed < self._interval_s and not self._stop_event.is_set():
@@ -152,6 +157,14 @@ class BotRunner:
         # 3. Fetch market data — cached, all bots in same market share cache
         market_data = self.market.get_data()
         market_data = dict(market_data)
+        has_tradeable_data = any(
+            not k.startswith("_") and isinstance(v, dict) and v
+            for k, v in market_data.items()
+        )
+        if not has_tradeable_data:
+            self.status = "no_data"
+            logger.warning(f"{self.agent_id} | no tradeable market data from {self.market.market_id}")
+            return
 
         # 4. Get regime
         regime = self.market.get_regime(market_data)

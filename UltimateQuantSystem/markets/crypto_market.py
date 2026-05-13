@@ -14,6 +14,7 @@ Key differences from NSEMarket:
 To add more symbols: edit CRYPTO_SYMBOLS below.
 """
 
+import os
 import time
 import threading
 import requests
@@ -23,7 +24,15 @@ from loguru import logger
 from markets.base_market import BaseMarket
 
 
-CRYPTO_SYMBOLS = ["BTC/USDT", "ETH/USDT", "BNB/USDT"]
+DEFAULT_CRYPTO_SYMBOLS = [
+    "BTC/USDT", "ETH/USDT", "BNB/USDT", "SOL/USDT", "AVAX/USDT",
+    "FET/USDT", "RNDR/USDT", "TAO/USDT", "INJ/USDT", "WIF/USDT",
+]
+CRYPTO_SYMBOLS = [
+    s.strip()
+    for s in os.getenv("CRYPTO_SYMBOLS", ",".join(DEFAULT_CRYPTO_SYMBOLS)).split(",")
+    if s.strip()
+]
 
 # Allocation per bot per crypto regime
 _ALLOC_TABLE = {

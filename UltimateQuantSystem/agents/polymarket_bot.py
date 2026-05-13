@@ -31,6 +31,7 @@ from loguru import logger
 
 
 POSITION_SIZE_INR  = 2_000    # Rs per prediction market position
+MAX_RISK_PCT       = 0.005    # 0.5% capital cap for small-account consistency
 MAX_CONCURRENT     = 6
 TAKE_PROFIT_PCT    = 0.40     # +40% gain on position
 STOP_LOSS_PCT      = 0.30     # -30% loss on position
@@ -62,18 +63,22 @@ class PolymarketBot(BaseAgent):
         risk_amount = signal["risk_amount"]
         thesis      = signal.get("thesis", "")
 
-        approved, reason = self.risk.approve_trade(self.agent_id, risk_amount)
+        trade_id = str(uuid.uuid4())[:8]
+        approved, reason = self.risk.approve_and_open(self.agent_id, trade_id, risk_amount)
         if not approved:
             logger.info(f"{self.agent_id} | BLOCKED | {symbol[:40]} | {reason}")
             return
 
-        self.broker.place_order(
-            symbol=symbol, exchange=self._exchange,
-            order_type="BUY", quantity=1, price=entry_price,
-        )
-
-        trade_id = str(uuid.uuid4())[:8]
-        self.risk.register_open(self.agent_id, trade_id, risk_amount)
+        try:
+            self.broker.place_order(
+                symbol=symbol, exchange=self._exchange,
+                order_type="BUY", quantity=1, price=entry_price,
+                client_order_id=f"{self.agent_id}:{trade_id}:OPEN",
+            )
+        except Exception as e:
+            self.risk.cancel_open(self.agent_id, trade_id, str(e))
+            logger.error(f"{self.agent_id} | ORDER FAILED | {symbol[:40]} | {e}")
+            return
         self.journal.open_trade(
             trade_id=trade_id, agent_id=self.agent_id, symbol=symbol,
             direction=direction, entry_price=entry_price,
@@ -86,8 +91,7 @@ class PolymarketBot(BaseAgent):
         )
 
     def _check_exits(self, market_data: dict):
-        open_trades = [t for t in self.journal.trades.values()
-                       if t.agent_id == self.agent_id and t.status == "open"]
+        open_trades = self.journal.open_trades(agent_id=self.agent_id)
         for trade in open_trades:
             should_exit, reason = self.should_exit(trade.trade_id, market_data)
             if should_exit:
@@ -95,6 +99,7 @@ class PolymarketBot(BaseAgent):
                 self.broker.place_order(
                     symbol=trade.symbol, exchange=self._exchange,
                     order_type="SELL", quantity=1, price=ltp,
+                    client_order_id=f"{self.agent_id}:{trade.trade_id}:CLOSE",
                 )
                 closed = self.journal.close_trade(trade.trade_id, ltp, reason)
                 self.risk.register_close(self.agent_id, trade.trade_id, closed.pnl)
@@ -109,7 +114,7 @@ class PolymarketBot(BaseAgent):
         signals = []
 
         open_count = sum(
-            1 for t in self.journal.trades.values()
+            1 for t in self.journal.snapshot()
             if t.agent_id == self.agent_id and t.status == "open"
         )
         if open_count >= MAX_CONCURRENT:
@@ -122,7 +127,7 @@ class PolymarketBot(BaseAgent):
                 continue
 
             # Skip if already in this market
-            existing = [t for t in self.journal.trades.values()
+            existing = [t for t in self.journal.snapshot()
                         if t.agent_id == self.agent_id
                         and t.symbol == key and t.status == "open"]
             if existing:
@@ -152,7 +157,7 @@ class PolymarketBot(BaseAgent):
                     "symbol":      key,
                     "direction":   direction,
                     "entry_price": ltp,
-                    "risk_amount": POSITION_SIZE_INR,
+                    "risk_amount": min(POSITION_SIZE_INR, self.risk.state.capital * MAX_RISK_PCT),
                     "strategy":    "momentum",
                     "thesis": (
                         f"MOMENTUM | {question[:40]} | {outcome} @ {ltp:.3f} | "
@@ -170,7 +175,7 @@ class PolymarketBot(BaseAgent):
                     "symbol":      key,
                     "direction":   "long",
                     "entry_price": ltp,
-                    "risk_amount": POSITION_SIZE_INR * 0.5,   # half size — longshot risk
+                    "risk_amount": min(POSITION_SIZE_INR * 0.5, self.risk.state.capital * MAX_RISK_PCT),
                     "strategy":    "value_longshot",
                     "thesis": (
                         f"VALUE_LONGSHOT | {question[:40]} | YES @ {ltp:.3f} | "
@@ -190,7 +195,7 @@ class PolymarketBot(BaseAgent):
                     "symbol":      key.replace("_YES", "_NO"),
                     "direction":   "long",
                     "entry_price": no_price,
-                    "risk_amount": POSITION_SIZE_INR * 0.5,
+                    "risk_amount": min(POSITION_SIZE_INR * 0.5, self.risk.state.capital * MAX_RISK_PCT),
                     "strategy":    "fade_favorite",
                     "thesis": (
                         f"FADE | {question[:40]} | NO @ {no_price:.3f} "
@@ -211,7 +216,7 @@ class PolymarketBot(BaseAgent):
 
     # ── Exit logic ────────────────────────────────────────────────────────
     def should_exit(self, trade_id: str, market_data: dict) -> tuple[bool, str]:
-        trade = self.journal.trades.get(trade_id)
+        trade = self.journal.get_trade(trade_id)
         if not trade:
             return False, ""
 

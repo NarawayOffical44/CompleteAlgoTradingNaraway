@@ -56,7 +56,7 @@ class MomentumScalper(BaseAgent):
             logger.info(f"MomentumScalper | Nifty 5d={nifty_5d:.1f}% negative — skip all")
             return signals
 
-        open_count = sum(1 for t in self.journal.trades.values()
+        open_count = sum(1 for t in self.journal.snapshot()
                          if t.agent_id == self.agent_id and t.status == "open")
         if open_count >= MAX_POSITIONS:
             return signals
@@ -134,7 +134,7 @@ class MomentumScalper(BaseAgent):
         return signals
 
     def should_exit(self, trade_id: str, market_data: dict) -> tuple[bool, str]:
-        trade = self.journal.trades.get(trade_id)
+        trade = self.journal.get_trade(trade_id)
         if not trade:
             return False, ""
 

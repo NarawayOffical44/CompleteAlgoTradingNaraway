@@ -62,11 +62,12 @@ class NSEMarket(BaseMarket):
 
     market_id = "NSE"
 
-    def __init__(self):
+    def __init__(self, resources=None):
         self.market_fetcher = MarketDataFetcher()
         self.fundamentals   = FundamentalsData()
-        self._sentiment     = SentimentEngine()
-        self.news_filter    = NewsFilter()
+        self.resources      = resources
+        self._sentiment     = resources.sentiment_engine if resources else SentimentEngine()
+        self.news_filter    = resources.news_filter if resources else NewsFilter()
         self.regime_hmm     = HMMRegimeDetector()
         self.regime_claude  = RegimeDetector()
 

@@ -146,14 +146,14 @@ class OptionsBot:
         lot_size    = LOT_SIZES.get(self.underlying, 25)
         max_loss    = (self.wing_width - net_premium) * lot_size
 
-        approved, reason = self.risk.approve_trade("options_bot", max_loss)
+        pos_id   = f"IC_{self.underlying}_{expiry}_{datetime.now().strftime('%H%M')}"
+        approved, reason = self.risk.approve_and_open("options_bot", pos_id, max_loss)
         if not approved:
             logger.info(f"OptionsBot | risk blocked: {reason}")
             return
 
         ivr      = market_data.get(self.underlying, {}).get("iv_rank", 50)
         mkt_sent = market_data.get("_market_sentiment", {}).get("score", 0)
-        pos_id   = f"IC_{self.underlying}_{expiry}_{datetime.now().strftime('%H%M')}"
 
         legs = [
             IronCondorLeg(f"{self.underlying}{expiry}C{sc_strike}", sc_strike, "CE", "SELL", sc_prem, lot_size),
@@ -162,8 +162,16 @@ class OptionsBot:
             IronCondorLeg(f"{self.underlying}{expiry}P{lp_strike}", lp_strike, "PE", "BUY",  lp_prem, lot_size),
         ]
 
-        for leg in legs:
-            self.broker.place_order(leg.symbol, "NFO", leg.action, leg.quantity, leg.premium)
+        try:
+            for idx, leg in enumerate(legs):
+                self.broker.place_order(
+                    leg.symbol, "NFO", leg.action, leg.quantity, leg.premium,
+                    client_order_id=f"options_bot:{pos_id}:OPEN:{idx}",
+                )
+        except Exception as e:
+            self.risk.cancel_open("options_bot", pos_id, str(e))
+            logger.error(f"OptionsBot | ORDER FAILED | {pos_id} | {e}")
+            return
 
         pos = IronCondorPosition(
             position_id=pos_id, underlying=self.underlying, expiry=expiry, legs=legs,
@@ -174,7 +182,6 @@ class OptionsBot:
             entry_time=datetime.now().isoformat(),
         )
         self.positions[pos_id] = pos
-        self.risk.register_open("options_bot", pos_id, max_loss)
         self.journal.open_trade(
             trade_id=pos_id, agent_id="options_bot", symbol=self.underlying,
             direction="short_vol", entry_price=net_premium, quantity=lot_size,
@@ -216,9 +223,12 @@ class OptionsBot:
 
     def _close_position(self, pos_id: str, pnl: float, reason: str):
         pos = self.positions[pos_id]
-        for leg in pos.legs:
+        for idx, leg in enumerate(pos.legs):
             close_action = "BUY" if leg.action == "SELL" else "SELL"
-            self.broker.place_order(leg.symbol, "NFO", close_action, leg.quantity, 0)
+            self.broker.place_order(
+                leg.symbol, "NFO", close_action, leg.quantity, 0,
+                client_order_id=f"options_bot:{pos_id}:CLOSE:{idx}",
+            )
         pos.status = "closed"
         self.risk.register_close("options_bot", pos_id, pnl)
         self.journal.close_trade(pos_id, pos.entry_premium, reason)

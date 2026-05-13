@@ -138,12 +138,12 @@ class BankNiftyStraddleBot:
         # Risk = 2× net_premium × lot (straddle can lose 2x if big move)
         max_loss = net_prem * 2 * BNK_LOT_SIZE
 
-        approved, reason = self.risk.approve_trade(self.agent_id, max_loss)
+        pos_id = f"STR_{self.underlying}_{expiry}_{datetime.now().strftime('%H%M')}"
+        approved, reason = self.risk.approve_and_open(self.agent_id, pos_id, max_loss)
         if not approved:
             logger.info(f"BNKStraddle | risk blocked: {reason}")
             return
 
-        pos_id = f"STR_{self.underlying}_{expiry}_{datetime.now().strftime('%H%M')}"
         ivr    = market_data.get(self.underlying, {}).get("iv_rank", 0)
 
         legs = [
@@ -151,8 +151,16 @@ class BankNiftyStraddleBot:
             StraddleLeg(f"{self.underlying}{expiry}P{atm_strike}", atm_strike, "PE", "SELL", p_prem, BNK_LOT_SIZE),
         ]
 
-        for leg in legs:
-            self.broker.place_order(leg.symbol, "NFO", "SELL", leg.quantity, leg.premium)
+        try:
+            for idx, leg in enumerate(legs):
+                self.broker.place_order(
+                    leg.symbol, "NFO", "SELL", leg.quantity, leg.premium,
+                    client_order_id=f"{self.agent_id}:{pos_id}:OPEN:{idx}",
+                )
+        except Exception as e:
+            self.risk.cancel_open(self.agent_id, pos_id, str(e))
+            logger.error(f"BNKStraddle | ORDER FAILED | {pos_id} | {e}")
+            return
 
         pos = StraddlePosition(
             position_id=pos_id,
@@ -164,7 +172,6 @@ class BankNiftyStraddleBot:
             entry_time=datetime.now().isoformat(),
         )
         self.positions[pos_id] = pos
-        self.risk.register_open(self.agent_id, pos_id, max_loss)
         self.journal.open_trade(
             trade_id=pos_id, agent_id=self.agent_id, symbol=self.underlying,
             direction="short_vol", entry_price=net_prem, quantity=BNK_LOT_SIZE,
@@ -204,8 +211,11 @@ class BankNiftyStraddleBot:
 
     def _close_position(self, pos_id: str, pnl: float, reason: str):
         pos = self.positions[pos_id]
-        for leg in pos.legs:
-            self.broker.place_order(leg.symbol, "NFO", "BUY", leg.quantity, 0)
+        for idx, leg in enumerate(pos.legs):
+            self.broker.place_order(
+                leg.symbol, "NFO", "BUY", leg.quantity, 0,
+                client_order_id=f"{self.agent_id}:{pos_id}:CLOSE:{idx}",
+            )
         pos.status = "closed"
         self.risk.register_close(self.agent_id, pos_id, pnl)
         self.journal.close_trade(pos_id, pos.entry_premium, reason)

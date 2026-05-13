@@ -67,8 +67,10 @@ class AutoTrainer:
         self._thread.start()
         logger.info("AutoTrainer | started | schedule: daily 15:45 + Sunday 07:00 IST")
 
-    def stop(self):
+    def stop(self, join: bool = False, timeout: float = 10.0):
         self._stop_event.set()
+        if join and self._thread and self._thread.is_alive():
+            self._thread.join(timeout=timeout)
 
     # ── Scheduling loop ────────────────────────────────────────────────────
     def _loop(self):

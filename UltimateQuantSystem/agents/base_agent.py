@@ -13,6 +13,7 @@ from loguru import logger
 
 
 class BaseAgent(ABC):
+    _exchange = "NSE"
 
     def __init__(self, agent_id: str, risk_engine: RiskEngine, journal: TradeJournal, broker: DhanClient):
         self.agent_id = agent_id
@@ -69,8 +70,10 @@ class BaseAgent(ABC):
         quantity = signal.get("quantity", self._calc_quantity(risk_amount, entry_price))
         thesis = signal.get("thesis", "")
 
-        # Gate 1: Risk engine approval
-        approved, reason = self.risk.approve_trade(self.agent_id, risk_amount)
+        trade_id = str(uuid.uuid4())[:8]
+
+        # Gate 1: atomically reserve risk before order placement.
+        approved, reason = self.risk.approve_and_open(self.agent_id, trade_id, risk_amount)
         if not approved:
             logger.info(f"{self.agent_id} | BLOCKED | {symbol} | {reason}")
             self.signal_stats["filtered_risk"] += 1
@@ -78,18 +81,21 @@ class BaseAgent(ABC):
 
         # Execute order
         order_type = "BUY" if direction == "long" else "SELL"
-        order = self.broker.place_order(
-            symbol=symbol,
-            exchange="NSE",
-            order_type=order_type,
-            quantity=int(quantity),
-            price=entry_price,
-        )
+        try:
+            self.broker.place_order(
+                symbol=symbol,
+                exchange=self._exchange,
+                order_type=order_type,
+                quantity=quantity,
+                price=entry_price,
+                client_order_id=f"{self.agent_id}:{trade_id}:OPEN",
+            )
+        except Exception as e:
+            self.risk.cancel_open(self.agent_id, trade_id, str(e))
+            logger.error(f"{self.agent_id} | ORDER FAILED | {symbol} | {e}")
+            return
 
-        trade_id = str(uuid.uuid4())[:8]
-
-        # Register with risk engine + journal
-        self.risk.register_open(self.agent_id, trade_id, risk_amount)
+        # Risk was already reserved atomically; now record the trade.
         self.journal.open_trade(
             trade_id=trade_id,
             agent_id=self.agent_id,
@@ -105,8 +111,7 @@ class BaseAgent(ABC):
         logger.info(f"{self.agent_id} | ENTERED | {symbol} {direction} @ {entry_price} | risk={risk_amount:.2f}")
 
     def _check_exits(self, market_data: dict):
-        open_trades = [t for t in self.journal.trades.values()
-                       if t.agent_id == self.agent_id and t.status == "open"]
+        open_trades = self.journal.open_trades(agent_id=self.agent_id)
 
         for trade in open_trades:
             should_exit, reason = self.should_exit(trade.trade_id, market_data)
@@ -115,10 +120,11 @@ class BaseAgent(ABC):
                 order_type = "SELL" if trade.direction == "long" else "BUY"
                 self.broker.place_order(
                     symbol=trade.symbol,
-                    exchange="NSE",
+                    exchange=self._exchange,
                     order_type=order_type,
                     quantity=int(trade.quantity),
                     price=exit_price,
+                    client_order_id=f"{self.agent_id}:{trade.trade_id}:CLOSE",
                 )
                 closed = self.journal.close_trade(trade.trade_id, exit_price, reason)
                 self.risk.register_close(self.agent_id, trade.trade_id, closed.pnl)

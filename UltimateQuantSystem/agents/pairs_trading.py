@@ -115,7 +115,7 @@ class PairsTradingAgent(BaseAgent):
         return signals
 
     def should_exit(self, trade_id: str, market_data: dict) -> tuple[bool, str]:
-        trade = self.journal.trades.get(trade_id)
+        trade = self.journal.get_trade(trade_id)
         if not trade:
             return False, ""
 
@@ -201,7 +201,7 @@ class PairsTradingAgent(BaseAgent):
         return z, beta, mean, std
 
     def _find_open_pair_trade(self, pair_key: str):
-        return next((t for t in self.journal.trades.values()
+        return next((t for t in self.journal.snapshot()
                      if t.agent_id == self.agent_id and t.status == "open"
                      and pair_key in t.thesis), None)
 
